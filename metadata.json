@@ -1,0 +1,6 @@
+{
+  "name": "PS1 Netplay Combat 3",
+  "description": "منصة أندرويد وويب احترافية للعب الجماعي لألعاب PS1 و Combat 3 عبر Netplay مع شاشة لعب نقية ودعم Gamepad ومزامنة الإطارات ومحرك محاكاة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

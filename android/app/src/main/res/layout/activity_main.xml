@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- 1. Pure Fullscreen / Clean Screen Video Surface View -->
+    <com.ps1.netplay.ui.GameSurfaceView
+        android:id="@+id/game_surface_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center" />
+
+    <!-- 2. Discrete, Semi-Transparent Settings Trigger Button (Top-Right Corner) -->
+    <ImageButton
+        android:id="@+id/btn_discrete_settings"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:background="@drawable/bg_round_discrete"
+        android:contentDescription="@string/action_settings"
+        android:src="@android:drawable/ic_menu_manage"
+        android:alpha="0.45" />
+
+</FrameLayout>

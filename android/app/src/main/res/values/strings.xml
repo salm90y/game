@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">PS1 Netplay Combat 3</string>
+    <string name="action_settings">الإعدادات</string>
+    <string name="settings_title">لوحة الإعدادات المعزولة</string>
+    <string name="cat_rom_bios">💾 إدارة ملفات اللعبة والبيوس (ROM &amp; BIOS)</string>
+    <string name="action_load_rom">📂 إضافة / تحميل لعبة PS1 (.iso / .bin / .chd / .cue)</string>
+    <string name="action_load_bios">⚡ إضافة ملف BIOS مخصص (SCPH1001.bin / SCPH5501.bin)</string>
+    <string name="status_current_rom">اللعبة الحالية: %1$s</string>
+    <string name="status_current_bios">البيوس الحالي: %1$s</string>
+    <string name="cat_controller_gamepad">🎮 يد التحكم (Gamepad OTG / Bluetooth)</string>
+    <string name="action_reset_mapping">إعادة تعيين أزرار التحكم إلى الافتراضي</string>
+    <string name="action_leave_room">🚪 مغادرة الغرفة وإنهاء الجلسة</string>
+</resources>
