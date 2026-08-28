@@ -644,7 +644,9 @@ jobs:
           export ANDROID_HOME=\${ANDROID_HOME:-/usr/local/lib/android/sdk}
           export ANDROID_SDK_ROOT=\${ANDROID_SDK_ROOT:-\$ANDROID_HOME}
           echo "sdk.dir=\$ANDROID_HOME" > local.properties
-          gradle wrapper --gradle-version 8.2
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            curl -fSL -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar
+          fi
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace --no-daemon
 
