@@ -623,14 +623,15 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
-      - name: Set up Android SDK & Accept Licenses
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK & Build Tools
+      - name: Accept Licenses & Setup NDK
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1" || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -640,11 +641,12 @@ jobs:
       - name: Build Debug APK with Gradle
         working-directory: ./android
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          if [ -d "$ANDROID_HOME/ndk/25.2.9519653" ]; then
-            echo "ndk.dir=$ANDROID_HOME/ndk/25.2.9519653" >> local.properties
-          fi
-          gradle assembleDebug --stacktrace --no-daemon
+          export ANDROID_HOME=\${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          export ANDROID_SDK_ROOT=\${ANDROID_SDK_ROOT:-\$ANDROID_HOME}
+          echo "sdk.dir=\$ANDROID_HOME" > local.properties
+          gradle wrapper --gradle-version 8.2
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4

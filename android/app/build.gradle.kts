@@ -6,7 +6,6 @@ plugins {
 android {
     namespace = "com.ps1.netplay"
     compileSdk = 34
-    ndkVersion = "25.2.9519653"
 
     defaultConfig {
         applicationId = "com.ps1.netplay"
