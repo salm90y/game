@@ -605,16 +605,13 @@ android {
 on:
   push:
     branches: [ "main", "master" ]
-    paths:
-      - "android/**"
-      - ".github/workflows/build-apk.yml"
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Debug & Release APK
+    name: Build Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -626,25 +623,24 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
 
-      - name: Set up Android SDK & NDK
+      - name: Set up Android SDK & Accept Licenses
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK & CMake
+      - name: Install Android NDK & Build Tools
         run: |
-          sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1"
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Grant Execute Permission for Gradlew
-        run: |
-          chmod +x ./android/gradlew || true
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.2'
 
       - name: Build Debug APK with Gradle
         working-directory: ./android
         run: |
-          gradle wrapper --gradle-version 8.2 || true
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace --no-daemon
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -652,7 +648,7 @@ jobs:
           name: PS1-Netplay-Combat3-Debug-APK
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
-          if-no-files-found: warn`
+          if-no-files-found: error`
     }
   };
 

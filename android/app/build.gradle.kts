@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.ps1.netplay"
     compileSdk = 34
+    ndkVersion = "25.2.9519653"
 
     defaultConfig {
         applicationId = "com.ps1.netplay"
@@ -17,7 +18,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
-                cppFlags += "-std=c++17 -O3 -flto -fexceptions -frtti"
+                cppFlags += "-std=c++17 -O3 -fexceptions -frtti"
                 arguments += "-DANDROID_STL=c++_shared"
                 abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
             }

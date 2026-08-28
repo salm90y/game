@@ -125,6 +125,10 @@ export class PS1InputManager {
     }
   }
 
+  public resetMapping() {
+    this.setMapping({ ...DEFAULT_GAMEPAD_MAPPING });
+  }
+
   public getMapping(): GamepadMapping {
     return this.activeMapping;
   }
