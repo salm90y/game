@@ -640,11 +640,11 @@ jobs:
       - name: Build Debug APK with Gradle
         working-directory: ./android
         run: |
-          export ANDROID_HOME=$ANDROID_SDK_ROOT
-          export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653
-          gradle wrapper --gradle-version 8.2 || true
-          chmod +x ./gradlew || true
-          ./gradlew assembleDebug --stacktrace --no-daemon || gradle assembleDebug --stacktrace --no-daemon
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          if [ -d "$ANDROID_HOME/ndk/25.2.9519653" ]; then
+            echo "ndk.dir=$ANDROID_HOME/ndk/25.2.9519653" >> local.properties
+          fi
+          gradle assembleDebug --stacktrace --no-daemon
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
