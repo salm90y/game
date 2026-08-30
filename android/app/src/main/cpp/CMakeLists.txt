@@ -1,29 +1,12 @@
 cmake_minimum_required(VERSION 3.22.1)
 project("ps1_netplay_core")
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 add_definitions(-D__LIBRETRO__ -DANDROID)
-
-add_library(
-    ps1_netplay_core
-    SHARED
-    ps1_retro_bridge.cpp
-    netplay_sync.cpp
-)
-
+add_library(ps1_netplay_core SHARED ps1_retro_bridge.cpp netplay_sync.cpp combat3_netplay_protocol.cpp)
 find_library(log-lib log)
 find_library(android-lib android)
 find_library(gles3-lib GLESv3)
 find_library(egl-lib EGL)
 find_library(jnigraphics-lib jnigraphics)
-
-target_link_libraries(
-    ps1_netplay_core
-    ${log-lib}
-    ${android-lib}
-    ${gles3-lib}
-    ${egl-lib}
-    ${jnigraphics-lib}
-)
+target_link_libraries(ps1_netplay_core ${log-lib} ${android-lib} ${gles3-lib} ${egl-lib} ${jnigraphics-lib})
