@@ -1,0 +1,48 @@
+name: Build Combat3 Repaired APK
+
+on:
+  push:
+    paths:
+      - 'Combat3_Multiplayer_Android/**'
+      - '.github/workflows/build-combat3-repaired.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build dependencies
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1" || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
+
+      - name: Build repaired project
+        working-directory: Combat3_Multiplayer_Android
+        run: |
+          gradle assembleDebug --stacktrace --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Combat3-Multiplayer-Repaired-Debug-APK
+          path: Combat3_Multiplayer_Android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
