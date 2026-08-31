@@ -32,48 +32,41 @@ class MainActivity : AppCompatActivity() {
     private lateinit var temporaryStateStore: TemporaryStateStore
     private var currentRomName = "Combat 3 (Built-in)"
     private var currentBiosName = "HLE High-Level Emulation (تلقائي)"
+    private val activityScope = CoroutineScope(Dispatchers.Default + Job())
+    private var isGameRunning = false
 
     private val romPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { handleRomSelected(it) } }
     private val biosPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { handleBiosSelected(it) } }
-    private val activityScope = CoroutineScope(Dispatchers.Default + Job())
-    private var isGameRunning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemUI()
-        setContentView(R.layout.activity_main)
-        gameSurfaceView = findViewById(R.id.game_surface_view)
-        btnSettings = findViewById(R.id.btn_discrete_settings)
-
-        // Rollback state is session-only. Remove any stale/corrupt state left by an older run.
-        temporaryStateStore = TemporaryStateStore(this)
-        temporaryStateStore.clear()
-
-        coreManager = CoreManager(this)
-        if (!coreManager.loadCore()) {
-            Toast.makeText(this, "تعذر تحميل محرك PS1. تم تنظيف بيانات الجلسة المؤقتة.", Toast.LENGTH_LONG).show()
+        try {
+            setContentView(R.layout.activity_main)
+            gameSurfaceView = findViewById(R.id.game_surface_view)
+            btnSettings = findViewById(R.id.btn_discrete_settings)
+            temporaryStateStore = TemporaryStateStore(this)
+            temporaryStateStore.clear()
+            coreManager = CoreManager(this)
+            val roomParam = intent?.data?.getQueryParameter("room")
+            if (!roomParam.isNullOrEmpty()) netplaySession.joinRoom(roomParam)
+            matchCoordinator = MatchCoordinator(netplaySession.currentRoom?.isHost ?: true, netplaySession.getTransport())
+            btnSettings.setOnClickListener { openIsolatedSettings() }
+            // Native PS1 core is loaded only after a ROM is selected.
+        } catch (t: Throwable) {
+            android.util.Log.e("MainActivity", "Startup failure", t)
+            Toast.makeText(this, "تعذر تشغيل الواجهة: ${t.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
-
-        val data = intent?.data
-        val roomParam = data?.getQueryParameter("room")
-        if (!roomParam.isNullOrEmpty()) netplaySession.joinRoom(roomParam)
-
-        matchCoordinator = MatchCoordinator(
-            isHost = netplaySession.currentRoom?.isHost ?: true,
-            transport = netplaySession.getTransport()
-        )
-        btnSettings.setOnClickListener { openIsolatedSettings() }
-        startGameLoop()
     }
 
     private fun startGameLoop() {
+        if (isGameRunning) return
         isGameRunning = true
         activityScope.launch {
             val frameTimeNs = 16_666_666L
             while (isGameRunning) {
                 val startNs = System.nanoTime()
-                val localInput = gamepadManager.getCurrentInputMask()
-                matchCoordinator?.tickFrame(localInput)
+                matchCoordinator?.tickFrame(gamepadManager.getCurrentInputMask())
                 val sleepNs = frameTimeNs - (System.nanoTime() - startNs)
                 if (sleepNs > 0) delay(sleepNs / 1_000_000L)
             }
@@ -98,9 +91,10 @@ class MainActivity : AppCompatActivity() {
             if (success) {
                 currentRomName = fileName
                 temporaryStateStore.clear()
+                startGameLoop()
                 Toast.makeText(this, "تم تحميل اللعبة بنجاح: $fileName", Toast.LENGTH_SHORT).show()
             } else Toast.makeText(this, "تعذر تشغيل ملف اللعبة المحدد", Toast.LENGTH_LONG).show()
-        }
+        } ?: Toast.makeText(this, "تعذر قراءة ملف اللعبة", Toast.LENGTH_LONG).show()
     }
 
     private fun handleBiosSelected(uri: Uri) {
@@ -123,14 +117,9 @@ class MainActivity : AppCompatActivity() {
         return name
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean =
-        if (event != null && gamepadManager.onKeyDown(keyCode, event)) true else super.onKeyDown(keyCode, event)
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean =
-        if (event != null && gamepadManager.onKeyUp(keyCode, event)) true else super.onKeyUp(keyCode, event)
-
-    override fun onGenericMotionEvent(event: MotionEvent?): Boolean =
-        if (event != null && gamepadManager.onGenericMotionEvent(event)) true else super.onGenericMotionEvent(event)
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean = if (event != null && gamepadManager.onKeyDown(keyCode, event)) true else super.onKeyDown(keyCode, event)
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean = if (event != null && gamepadManager.onKeyUp(keyCode, event)) true else super.onKeyUp(keyCode, event)
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean = if (event != null && gamepadManager.onGenericMotionEvent(event)) true else super.onGenericMotionEvent(event)
 
     private fun hideSystemUI() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -140,18 +129,15 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
     }
 
     override fun onDestroy() {
         isGameRunning = false
         activityScope.cancel()
-        coreManager.unload()
-        temporaryStateStore.clear()
+        if (::coreManager.isInitialized) coreManager.unload()
+        if (::temporaryStateStore.isInitialized) temporaryStateStore.clear()
         super.onDestroy()
     }
 }
