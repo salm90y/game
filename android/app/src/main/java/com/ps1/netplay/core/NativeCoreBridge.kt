@@ -3,30 +3,27 @@ package com.ps1.netplay.core
 import android.util.Log
 import android.view.Surface
 
-/**
- * Safe Kotlin/JNI bridge to the PS1 Libretro native core.
- *
- * The native library is optional at application startup: a missing or incompatible
- * ABI must never crash the launcher. Native calls are made only after a successful
- * System.loadLibrary().
- */
+/** JNI bridge. The native library is deliberately loaded lazily, never during launcher startup. */
 object NativeCoreBridge {
     private const val TAG = "NativeCoreBridge"
 
-    @Volatile
-    private var libraryLoaded = false
+    @Volatile private var libraryLoaded = false
+    @Volatile private var loadAttempted = false
 
-    init {
-        try {
+    @Synchronized
+    fun ensureLoaded(): Boolean {
+        if (libraryLoaded) return true
+        if (loadAttempted) return false
+        loadAttempted = true
+        return try {
             System.loadLibrary("ps1_netplay_core")
             libraryLoaded = true
             Log.i(TAG, "Native library loaded")
-        } catch (e: UnsatisfiedLinkError) {
+            true
+        } catch (t: Throwable) {
             libraryLoaded = false
-            Log.e(TAG, "Native library unavailable; app will remain usable without emulation", e)
-        } catch (e: SecurityException) {
-            libraryLoaded = false
-            Log.e(TAG, "Native library blocked by platform security", e)
+            Log.e(TAG, "Native library unavailable", t)
+            false
         }
     }
 
@@ -41,15 +38,13 @@ object NativeCoreBridge {
     external fun nativeLoadState(stateBytes: ByteArray): Boolean
 
     fun safeLoadCore(corePath: String): Boolean =
-        if (libraryLoaded) runCatching { nativeLoadCore(corePath) }.getOrElse {
-            Log.e(TAG, "nativeLoadCore failed", it)
-            false
+        if (ensureLoaded()) runCatching { nativeLoadCore(corePath) }.getOrElse {
+            Log.e(TAG, "nativeLoadCore failed", it); false
         } else false
 
     fun safeLoadGame(gamePath: String): Boolean =
-        if (libraryLoaded) runCatching { nativeLoadGame(gamePath) }.getOrElse {
-            Log.e(TAG, "nativeLoadGame failed", it)
-            false
+        if (ensureLoaded()) runCatching { nativeLoadGame(gamePath) }.getOrElse {
+            Log.e(TAG, "nativeLoadGame failed", it); false
         } else false
 
     fun safeRunFrame(p1Mask: Int, p2Mask: Int) {
@@ -63,6 +58,7 @@ object NativeCoreBridge {
     }
 
     fun safeSetSurface(surface: Surface?) {
+        // Do not load JNI merely because Android creates the Surface during launch.
         if (libraryLoaded) runCatching { nativeSetSurface(surface) }
             .onFailure { Log.e(TAG, "nativeSetSurface failed", it) }
     }
