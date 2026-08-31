@@ -1,15 +1,9 @@
-/**
- * PS1 Libretro Native JNI Core Engine (Beetle PSX / Mednafen / DuckStation)
- * Provides 60 FPS Emulation, 16-bit Input Masking, Fast Save-States for Netplay Rollback
- */
-
 #include "ps1_retro_bridge.h"
 #include <dlfcn.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 #include <cstring>
-#include <cstdlib>
 #include <vector>
 
 #define LOG_TAG "PS1NativeBridge"
@@ -18,8 +12,9 @@
 
 static void *g_core_dl_handle = nullptr;
 static ANativeWindow *g_native_window = nullptr;
+static bool g_core_initialized = false;
+static bool g_game_loaded = false;
 
-// Libretro Core Function Pointers
 static retro_init_t g_retro_init = nullptr;
 static retro_deinit_t g_retro_deinit = nullptr;
 static retro_load_game_t g_retro_load_game = nullptr;
@@ -28,98 +23,76 @@ static retro_run_t g_retro_run = nullptr;
 static retro_serialize_size_t g_retro_serialize_size = nullptr;
 static retro_serialize_t g_retro_serialize = nullptr;
 static retro_unserialize_t g_retro_unserialize = nullptr;
-static retro_get_system_av_info_t g_retro_get_system_av_info = nullptr;
-
-// Frame input buffers for Player 1 and Player 2 (PS1 16-bit mask)
+static enum retro_pixel_format g_pixel_format = RETRO_PIXEL_FORMAT_RGB565;
 static uint16_t g_p1_input_mask = 0;
 static uint16_t g_p2_input_mask = 0;
-static enum retro_pixel_format g_pixel_format = RETRO_PIXEL_FORMAT_RGB565;
 
-// Libretro Callbacks
 static void retro_video_refresh_cb(const void *data, unsigned width, unsigned height, size_t pitch) {
     if (!data || !g_native_window) return;
-
     ANativeWindow_Buffer buffer;
-    if (ANativeWindow_lock(g_native_window, &buffer, nullptr) == 0) {
-        auto *dst = static_cast<uint8_t *>(buffer.bits);
-        const auto *src = static_cast<const uint8_t *>(data);
-        size_t copy_bytes = width * 2; // RGB565 / 16-bit color
-        if (g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888) {
-            copy_bytes = width * 4;
-        }
+    if (ANativeWindow_lock(g_native_window, &buffer, nullptr) != 0) return;
 
-        for (unsigned y = 0; y < height; ++y) {
-            if (y < (unsigned)buffer.height) {
-                memcpy(dst + (y * buffer.stride * 2), src + (y * pitch), copy_bytes);
-            }
-        }
-        ANativeWindow_unlockAndPost(g_native_window);
+    const size_t bpp = (g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888) ? 4u : 2u;
+    const size_t src_row = static_cast<size_t>(width) * bpp;
+    const size_t dst_row = static_cast<size_t>(buffer.stride) * bpp;
+    const unsigned rows = height < static_cast<unsigned>(buffer.height) ? height : static_cast<unsigned>(buffer.height);
+    const auto *src = static_cast<const uint8_t *>(data);
+    auto *dst = static_cast<uint8_t *>(buffer.bits);
+    for (unsigned y = 0; y < rows; ++y) {
+        const size_t bytes = src_row < dst_row ? src_row : dst_row;
+        memcpy(dst + y * dst_row, src + y * pitch, bytes);
     }
+    ANativeWindow_unlockAndPost(g_native_window);
 }
 
-static size_t retro_audio_sample_batch_cb(const int16_t *data, size_t frames) {
-    // SPU PCM samples routed to OpenSL ES or Oboe fast audio pipeline
-    return frames;
-}
+static size_t retro_audio_sample_batch_cb(const int16_t *, size_t frames) { return frames; }
+static void retro_audio_sample_cb(int16_t, int16_t) {}
+static void retro_input_poll_cb(void) {}
 
-static void retro_audio_sample_cb(int16_t left, int16_t right) {
-    // Direct stereo sample callback
-}
-
-static void retro_input_poll_cb(void) {
-    // Polling hook
-}
-
-static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id) {
+static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned, unsigned id) {
     if (device != RETRO_DEVICE_JOYPAD) return 0;
-
-    uint16_t current_mask = (port == 0) ? g_p1_input_mask : g_p2_input_mask;
-
+    const uint16_t mask = port == 0 ? g_p1_input_mask : g_p2_input_mask;
     switch (id) {
-        case RETRO_DEVICE_ID_JOYPAD_B:      return (current_mask & (1 << 0)) ? 1 : 0; // Cross
-        case RETRO_DEVICE_ID_JOYPAD_A:      return (current_mask & (1 << 1)) ? 1 : 0; // Circle
-        case RETRO_DEVICE_ID_JOYPAD_Y:      return (current_mask & (1 << 2)) ? 1 : 0; // Square
-        case RETRO_DEVICE_ID_JOYPAD_X:      return (current_mask & (1 << 3)) ? 1 : 0; // Triangle
-        case RETRO_DEVICE_ID_JOYPAD_L:      return (current_mask & (1 << 4)) ? 1 : 0; // L1
-        case RETRO_DEVICE_ID_JOYPAD_R:      return (current_mask & (1 << 5)) ? 1 : 0; // R1
-        case RETRO_DEVICE_ID_JOYPAD_L2:     return (current_mask & (1 << 6)) ? 1 : 0; // L2
-        case RETRO_DEVICE_ID_JOYPAD_R2:     return (current_mask & (1 << 7)) ? 1 : 0; // R2
-        case RETRO_DEVICE_ID_JOYPAD_SELECT: return (current_mask & (1 << 8)) ? 1 : 0; // Select
-        case RETRO_DEVICE_ID_JOYPAD_START:  return (current_mask & (1 << 9)) ? 1 : 0; // Start
-        case RETRO_DEVICE_ID_JOYPAD_UP:     return (current_mask & (1 << 12)) ? 1 : 0;
-        case RETRO_DEVICE_ID_JOYPAD_DOWN:   return (current_mask & (1 << 13)) ? 1 : 0;
-        case RETRO_DEVICE_ID_JOYPAD_LEFT:   return (current_mask & (1 << 14)) ? 1 : 0;
-        case RETRO_DEVICE_ID_JOYPAD_RIGHT:  return (current_mask & (1 << 15)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_B: return (mask & (1 << 0)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_A: return (mask & (1 << 1)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_Y: return (mask & (1 << 2)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_X: return (mask & (1 << 3)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_L: return (mask & (1 << 4)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_R: return (mask & (1 << 5)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_L2: return (mask & (1 << 6)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_R2: return (mask & (1 << 7)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_SELECT: return (mask & (1 << 8)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_START: return (mask & (1 << 9)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_UP: return (mask & (1 << 12)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_DOWN: return (mask & (1 << 13)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_LEFT: return (mask & (1 << 14)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_RIGHT: return (mask & (1 << 15)) ? 1 : 0;
         default: return 0;
     }
 }
 
 static bool retro_environment_cb(unsigned cmd, void *data) {
+    if (!data && (cmd == 10 || cmd == 3)) return false;
     switch (cmd) {
-        case 10: // RETRO_ENVIRONMENT_SET_PIXEL_FORMAT
+        case 10:
             g_pixel_format = *static_cast<enum retro_pixel_format *>(data);
-            return true;
-        case 3:  // RETRO_ENVIRONMENT_GET_CAN_DUPE
+            return g_pixel_format == RETRO_PIXEL_FORMAT_RGB565 || g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888;
+        case 3:
             *static_cast<bool *>(data) = true;
             return true;
-        default:
-            return false;
+        default: return false;
     }
 }
 
 extern "C" {
-
-JNIEXPORT jboolean JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(JNIEnv *env, jobject thiz, jstring core_path) {
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(JNIEnv *env, jobject, jstring core_path) {
+    if (!core_path) return JNI_FALSE;
+    if (g_core_dl_handle) return g_core_initialized ? JNI_TRUE : JNI_FALSE;
     const char *path = env->GetStringUTFChars(core_path, nullptr);
-    LOGI("Loading Libretro PS1 core dynamic library from: %s", path);
-    g_core_dl_handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+    if (!path) return JNI_FALSE;
+    g_core_dl_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     env->ReleaseStringUTFChars(core_path, path);
-
-    if (!g_core_dl_handle) {
-        LOGE("Failed to open core: %s", dlerror());
-        return JNI_FALSE;
-    }
+    if (!g_core_dl_handle) return JNI_FALSE;
 
     g_retro_init = (retro_init_t)dlsym(g_core_dl_handle, "retro_init");
     g_retro_deinit = (retro_deinit_t)dlsym(g_core_dl_handle, "retro_deinit");
@@ -129,8 +102,6 @@ Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(JNIEnv *env, jobject t
     g_retro_serialize_size = (retro_serialize_size_t)dlsym(g_core_dl_handle, "retro_serialize_size");
     g_retro_serialize = (retro_serialize_t)dlsym(g_core_dl_handle, "retro_serialize");
     g_retro_unserialize = (retro_unserialize_t)dlsym(g_core_dl_handle, "retro_unserialize");
-    g_retro_get_system_av_info = (retro_get_system_av_info_t)dlsym(g_core_dl_handle, "retro_get_system_av_info");
-
     auto set_env = (retro_set_environment_t)dlsym(g_core_dl_handle, "retro_set_environment");
     auto set_video = (retro_set_video_refresh_t)dlsym(g_core_dl_handle, "retro_set_video_refresh");
     auto set_audio = (retro_set_audio_sample_t)dlsym(g_core_dl_handle, "retro_set_audio_sample");
@@ -138,86 +109,79 @@ Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(JNIEnv *env, jobject t
     auto set_input = (retro_set_input_state_t)dlsym(g_core_dl_handle, "retro_set_input_state");
     auto set_poll = (retro_set_input_poll_t)dlsym(g_core_dl_handle, "retro_set_input_poll");
 
-    if (set_env) set_env(retro_environment_cb);
-    if (set_video) set_video(retro_video_refresh_cb);
+    if (!g_retro_init || !g_retro_deinit || !g_retro_load_game || !g_retro_unload_game || !g_retro_run ||
+        !set_env || !set_video || !set_input || !set_poll) {
+        dlclose(g_core_dl_handle);
+        g_core_dl_handle = nullptr;
+        return JNI_FALSE;
+    }
+    set_env(retro_environment_cb);
+    set_video(retro_video_refresh_cb);
     if (set_audio) set_audio(retro_audio_sample_cb);
     if (set_audio_batch) set_audio_batch(retro_audio_sample_batch_cb);
-    if (set_input) set_input(retro_input_state_cb);
-    if (set_poll) set_poll(retro_input_poll_cb);
-
-    if (g_retro_init) g_retro_init();
+    set_input(retro_input_state_cb);
+    set_poll(retro_input_poll_cb);
+    g_retro_init();
+    g_core_initialized = true;
     return JNI_TRUE;
 }
 
-JNIEXPORT jboolean JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadGame(JNIEnv *env, jobject thiz, jstring game_path) {
-    if (!g_retro_load_game) return JNI_FALSE;
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadGame(JNIEnv *env, jobject, jstring game_path) {
+    if (!g_core_initialized || !g_retro_load_game || !game_path) return JNI_FALSE;
     const char *path = env->GetStringUTFChars(game_path, nullptr);
-
-    struct retro_game_info info = {};
+    if (!path) return JNI_FALSE;
+    retro_game_info info = {};
     info.path = path;
-    info.data = nullptr;
-    info.size = 0;
-    info.meta = nullptr;
-
-    bool success = g_retro_load_game(&info);
+    const bool ok = g_retro_load_game(&info);
     env->ReleaseStringUTFChars(game_path, path);
-    return success ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeRunFrame(JNIEnv *env, jobject thiz, jint p1_mask, jint p2_mask) {
-    g_p1_input_mask = (uint16_t)p1_mask;
-    g_p2_input_mask = (uint16_t)p2_mask;
-    if (g_retro_run) {
-        g_retro_run();
-    }
-}
-
-JNIEXPORT void JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeUnloadGame(JNIEnv *env, jobject thiz) {
-    if (g_retro_unload_game) g_retro_unload_game();
-    if (g_retro_deinit) g_retro_deinit();
-    if (g_core_dl_handle) {
-        dlclose(g_core_dl_handle);
-        g_core_dl_handle = nullptr;
-    }
-}
-
-JNIEXPORT void JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetSurface(JNIEnv *env, jobject thiz, jobject surface) {
-    if (g_native_window) {
-        ANativeWindow_release(g_native_window);
-        g_native_window = nullptr;
-    }
-    if (surface) {
-        g_native_window = ANativeWindow_fromSurface(env, surface);
-    }
-}
-
-JNIEXPORT jbyteArray JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeSaveState(JNIEnv *env, jobject thiz) {
-    if (!g_retro_serialize_size || !g_retro_serialize) return nullptr;
-    size_t sz = g_retro_serialize_size();
-    if (sz == 0) return nullptr;
-
-    std::vector<uint8_t> buffer(sz);
-    if (!g_retro_serialize(buffer.data(), sz)) return nullptr;
-
-    jbyteArray result = env->NewByteArray(sz);
-    env->SetByteArrayRegion(result, 0, sz, reinterpret_cast<const jbyte*>(buffer.data()));
-    return result;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadState(JNIEnv *env, jobject thiz, jbyteArray state_bytes) {
-    if (!g_retro_unserialize || !state_bytes) return JNI_FALSE;
-    jsize len = env->GetArrayLength(state_bytes);
-    jbyte *bytes = env->GetByteArrayElements(state_bytes, nullptr);
-
-    bool ok = g_retro_unserialize(bytes, len);
-    env->ReleaseByteArrayElements(state_bytes, bytes, JNI_ABORT);
+    g_game_loaded = ok;
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
-} // extern "C"
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeRunFrame(JNIEnv *, jobject, jint p1, jint p2) {
+    if (!g_core_initialized || !g_game_loaded || !g_retro_run) return;
+    g_p1_input_mask = static_cast<uint16_t>(p1);
+    g_p2_input_mask = static_cast<uint16_t>(p2);
+    g_retro_run();
+}
+
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeUnloadGame(JNIEnv *, jobject) {
+    if (g_game_loaded && g_retro_unload_game) g_retro_unload_game();
+    if (g_core_initialized && g_retro_deinit) g_retro_deinit();
+    g_game_loaded = false;
+    g_core_initialized = false;
+    if (g_core_dl_handle) dlclose(g_core_dl_handle);
+    g_core_dl_handle = nullptr;
+    g_retro_init = nullptr; g_retro_deinit = nullptr; g_retro_load_game = nullptr;
+    g_retro_unload_game = nullptr; g_retro_run = nullptr; g_retro_serialize_size = nullptr;
+    g_retro_serialize = nullptr; g_retro_unserialize = nullptr;
+}
+
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetSurface(JNIEnv *env, jobject, jobject surface) {
+    if (g_native_window) { ANativeWindow_release(g_native_window); g_native_window = nullptr; }
+    if (surface) g_native_window = ANativeWindow_fromSurface(env, surface);
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSaveState(JNIEnv *env, jobject) {
+    if (!g_game_loaded || !g_retro_serialize_size || !g_retro_serialize) return nullptr;
+    const size_t size = g_retro_serialize_size();
+    if (size == 0 || size > 64u * 1024u * 1024u) return nullptr;
+    std::vector<uint8_t> state(size);
+    if (!g_retro_serialize(state.data(), size)) return nullptr;
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(size));
+    if (!out) return nullptr;
+    env->SetByteArrayRegion(out, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(state.data()));
+    return out;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadState(JNIEnv *env, jobject, jbyteArray state_bytes) {
+    if (!g_game_loaded || !g_retro_unserialize || !state_bytes) return JNI_FALSE;
+    const jsize len = env->GetArrayLength(state_bytes);
+    if (len <= 0 || len > 64 * 1024 * 1024) return JNI_FALSE;
+    jbyte *bytes = env->GetByteArrayElements(state_bytes, nullptr);
+    if (!bytes) return JNI_FALSE;
+    const bool ok = g_retro_unserialize(bytes, static_cast<size_t>(len));
+    env->ReleaseByteArrayElements(state_bytes, bytes, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+}
