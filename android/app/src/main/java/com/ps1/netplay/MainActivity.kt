@@ -9,8 +9,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,15 +31,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * Launcher-safe Activity.
- * No gamepad/network/native/custom-surface objects are constructed as field
- * initializers. The first screen is deliberately plain Android UI; the PS1
- * surface is created only after a ROM has been selected successfully.
- */
+/** Stable portrait launcher and synchronized PS1 room. */
 class MainActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
+    private lateinit var gameContainer: FrameLayout
+    private lateinit var emptyState: TextView
     private lateinit var btnSettings: ImageButton
+    private lateinit var btnChat: Button
+    private lateinit var btnConnect: Button
     private var gameSurfaceView: GameSurfaceView? = null
 
     private var gamepadManager: GamepadManager? = null
@@ -48,19 +49,15 @@ class MainActivity : AppCompatActivity() {
     private var romPickerLauncher: ActivityResultLauncher<String>? = null
     private var biosPickerLauncher: ActivityResultLauncher<String>? = null
     private var activityScope: CoroutineScope? = null
-
     private var currentRomName = "Combat 3 (Built-in)"
     private var currentBiosName = "HLE High-Level Emulation (تلقائي)"
     private var isGameRunning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Keep even system UI handling isolated from Activity construction.
         runCatching { hideSystemUI() }
 
         try {
-            // Register launchers only after the Activity is fully attached.
             romPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
                 if (uri != null) handleRomSelected(uri)
             }
@@ -70,9 +67,13 @@ class MainActivity : AppCompatActivity() {
 
             setContentView(R.layout.activity_main)
             root = findViewById(R.id.main_root)
+            gameContainer = findViewById(R.id.game_view_container)
+            emptyState = findViewById(R.id.game_empty_state)
             btnSettings = findViewById(R.id.btn_discrete_settings)
+            btnChat = findViewById(R.id.btn_chat)
+            btnConnect = findViewById(R.id.btn_connect)
 
-            // Construct non-native services only after the basic UI is visible.
+            // Non-native services are created only after the first screen is visible.
             gamepadManager = GamepadManager()
             coreManager = CoreManager(this)
             netplaySession = NetplaySession()
@@ -85,14 +86,26 @@ class MainActivity : AppCompatActivity() {
                 netplaySession?.currentRoom?.isHost ?: true,
                 netplaySession?.getTransport()
             )
+
             btnSettings.setOnClickListener { openIsolatedSettings() }
+            btnChat.setOnClickListener {
+                Toast.makeText(this, "الدردشة ستكون داخل الغرفة المتزامنة", Toast.LENGTH_SHORT).show()
+            }
+            btnConnect.setOnClickListener {
+                val room = netplaySession?.currentRoom
+                if (room == null) {
+                    Toast.makeText(this, "أنشئ أو أدخل غرفة أولاً من الإعدادات", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "تم الاتصال بالغرفة", Toast.LENGTH_SHORT).show()
+                }
+            }
         } catch (t: Throwable) {
             android.util.Log.e("MainActivity", "Startup failure", t)
-            // Keep the Activity alive and expose a visible diagnostic instead of crashing.
             Toast.makeText(this, "تعذر تهيئة بعض المكونات: ${t.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
+    /** Places the native game surface only inside the square game viewport. */
     private fun startGameSurface() {
         if (gameSurfaceView != null) return
         runCatching {
@@ -101,9 +114,13 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            root.addView(surface, 0)
+            gameContainer.addView(surface, 0)
             gameSurfaceView = surface
-        }.onFailure { android.util.Log.e("MainActivity", "Surface creation failed", it) }
+            emptyState.visibility = View.GONE
+        }.onFailure {
+            android.util.Log.e("MainActivity", "Surface creation failed", it)
+            Toast.makeText(this, "تعذر تشغيل شاشة اللعبة", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun startGameLoop() {
@@ -214,7 +231,7 @@ class MainActivity : AppCompatActivity() {
         activityScope?.cancel()
         runCatching { netplaySession?.leaveRoom() }
         runCatching { coreManager?.unload() }
-        runCatching { gameSurfaceView?.let { root.removeView(it) } }
+        runCatching { gameSurfaceView?.let { gameContainer.removeView(it) } }
         gameSurfaceView = null
         super.onDestroy()
     }
