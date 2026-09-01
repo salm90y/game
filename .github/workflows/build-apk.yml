@@ -30,22 +30,26 @@ jobs:
           yes | sdkmanager --licenses || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
 
-      - name: Download official Libretro PS1 core
+      - name: Download official Libretro PS1 core and package it as an APK asset
         shell: bash
         run: |
           set -euo pipefail
           BASE="https://buildbot.libretro.com/nightly/android/latest"
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            dir="android/app/src/main/jniLibs/${abi}"
+            dir="android/app/src/main/assets/cores/${abi}"
             zip="/tmp/pcsx-rearmed-${abi}.zip"
             mkdir -p "$dir"
             curl --fail --location --retry 3 --silent --show-error \
               "${BASE}/${abi}/pcsx_rearmed_libretro_android.so.zip" -o "$zip"
             unzip -j -o "$zip" '*.so' -d "$dir"
             if [ -f "$dir/pcsx_rearmed_libretro_android.so" ]; then
-              mv "$dir/pcsx_rearmed_libretro_android.so" "$dir/libpcsx_rearmed_libretro_android.so"
+              test -s "$dir/pcsx_rearmed_libretro_android.so"
+            elif [ -f "$dir/libpcsx_rearmed_libretro_android.so" ]; then
+              mv "$dir/libpcsx_rearmed_libretro_android.so" "$dir/pcsx_rearmed_libretro_android.so"
+            else
+              echo "PCSX ReARMed core was not found in downloaded archive for $abi"
+              exit 1
             fi
-            test -s "$dir/libpcsx_rearmed_libretro_android.so"
           done
 
       - name: Setup Gradle
@@ -61,6 +65,15 @@ jobs:
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
           ./gradlew clean assembleDebug --stacktrace --no-daemon
+
+      - name: Verify APK contains PS1 core assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -l "$APK" | grep -E 'assets/cores/(arm64-v8a|armeabi-v7a|x86_64)/pcsx_rearmed_libretro_android\.so' >/dev/null
+          echo "Verified: PS1 core assets are packaged in the APK"
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
