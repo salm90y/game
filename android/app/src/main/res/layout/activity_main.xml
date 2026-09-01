@@ -1,57 +1,131 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="#08111F"
-    android:paddingStart="12dp"
-    android:paddingEnd="12dp"
-    android:paddingTop="10dp"
-    android:paddingBottom="10dp">
+    android:background="#08111F">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
+
         <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center_vertical">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="COMBAT 3" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="غرفة لعب ومزامنة PS1" android:textColor="#8FA6C2" android:textSize="11sp" />
-        </LinearLayout>
-        <ImageButton android:id="@+id/btn_discrete_settings" android:layout_width="42dp" android:layout_height="42dp" android:background="@drawable/bg_round_discrete" android:contentDescription="الإعدادات" android:src="@android:drawable/ic_menu_manage" android:alpha="0.8" />
-    </LinearLayout>
-
-    <com.ps1.netplay.ui.SquareFrameLayout
-        android:id="@+id/game_view_container"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginTop="8dp"
-        android:background="#000000">
-        <TextView
-            android:id="@+id/game_empty_state"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:layout_height="52dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="COMBAT 3"
+                    android:textColor="#FFFFFF"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="غرفة لعب ومزامنة PS1"
+                    android:textColor="#8FA6C2"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btn_discrete_settings"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_round_discrete"
+                android:contentDescription="الإعدادات"
+                android:src="@android:drawable/ic_menu_manage"
+                android:alpha="0.82" />
+        </LinearLayout>
+
+        <com.ps1.netplay.ui.SquareFrameLayout
+            android:id="@+id/game_view_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="8dp"
+            android:background="#000000">
+
+            <TextView
+                android:id="@+id/game_empty_state"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="🎮\nCombat 3\n\nأضف اللعبة من الإعدادات لبدء اللعب"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:lineSpacingExtra="5dp" />
+        </com.ps1.netplay.ui.SquareFrameLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="غرفة اللعب"
+                android:textColor="#FFFFFF"
+                android:textSize="19sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:text="●  المزامنة جاهزة  •  بانتظار اللاعب الآخر"
+                android:textColor="#69D3A7"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:text="اللعب المشترك • اتصال مباشر بين اللاعبين"
+                android:textColor="#7891AD"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
             android:gravity="center"
-            android:text="🎮\nCombat 3\n\nأضف اللعبة من الإعدادات لبدء اللعب"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:lineSpacingExtra="4dp" />
-    </com.ps1.netplay.ui.SquareFrameLayout>
+            android:orientation="horizontal">
 
-    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="12dp" android:gravity="center_vertical" android:orientation="vertical">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="غرفة اللعب" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" />
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="بانتظار اللاعب الآخر • المزامنة جاهزة" android:textColor="#7F9AB8" android:textSize="12sp" />
-    </LinearLayout>
+            <Button
+                android:id="@+id/btn_chat"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:text="💬  دردشة"
+                android:textAllCaps="false" />
 
-    <LinearLayout android:layout_width="match_parent" android:layout_height="64dp" android:gravity="center" android:orientation="horizontal">
-        <Button android:id="@+id/btn_chat" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:layout_marginEnd="6dp" android:text="💬  دردشة" android:textAllCaps="false" />
-        <Button android:id="@+id/btn_connect" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:layout_marginStart="6dp" android:text="🔗  اتصل" android:textAllCaps="false" />
+            <Button
+                android:id="@+id/btn_connect"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:text="🔗  اتصل"
+                android:textAllCaps="false" />
+        </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+</FrameLayout>
