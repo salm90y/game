@@ -4,16 +4,25 @@
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 #include <cstring>
+#include <string>
 #include <vector>
+#include <sys/stat.h>
 
 #define LOG_TAG "PS1NativeBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+// Libretro environment command values used here. Keeping them local makes the
+// bridge tolerant of older/minimal libretro headers.
+static constexpr unsigned RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9;
+static constexpr unsigned RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY = 31;
+
 static void *g_core_dl_handle = nullptr;
 static ANativeWindow *g_native_window = nullptr;
 static bool g_core_initialized = false;
 static bool g_game_loaded = false;
+static std::string g_system_directory;
+static std::string g_save_directory;
 
 static retro_init_t g_retro_init = nullptr;
 static retro_deinit_t g_retro_deinit = nullptr;
@@ -28,7 +37,7 @@ static uint16_t g_p1_input_mask = 0;
 static uint16_t g_p2_input_mask = 0;
 
 static void retro_video_refresh_cb(const void *data, unsigned width, unsigned height, size_t pitch) {
-    if (!data || !g_native_window) return;
+    if (!data || !g_native_window || width == 0 || height == 0) return;
     ANativeWindow_Buffer buffer;
     if (ANativeWindow_lock(g_native_window, &buffer, nullptr) != 0) return;
 
@@ -72,27 +81,57 @@ static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned, un
 }
 
 static bool retro_environment_cb(unsigned cmd, void *data) {
-    if (!data && (cmd == 10 || cmd == 3)) return false;
+    if (!data) return false;
     switch (cmd) {
-        case 10:
+        case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+            if (g_system_directory.empty()) return false;
+            *static_cast<const char **>(data) = g_system_directory.c_str();
+            return true;
+        case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+            if (g_save_directory.empty()) return false;
+            *static_cast<const char **>(data) = g_save_directory.c_str();
+            return true;
+        case 10: // RETRO_ENVIRONMENT_SET_PIXEL_FORMAT
             g_pixel_format = *static_cast<enum retro_pixel_format *>(data);
             return g_pixel_format == RETRO_PIXEL_FORMAT_RGB565 || g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888;
-        case 3:
+        case 3: // RETRO_ENVIRONMENT_GET_CAN_DUPE
             *static_cast<bool *>(data) = true;
             return true;
-        default: return false;
+        default:
+            return false;
     }
+}
+
+static void ensure_directory(const std::string &path) {
+    if (!path.empty()) mkdir(path.c_str(), 0700);
 }
 
 extern "C" {
 JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(JNIEnv *env, jobject, jstring core_path) {
     if (!core_path) return JNI_FALSE;
     if (g_core_dl_handle) return g_core_initialized ? JNI_TRUE : JNI_FALSE;
+
     const char *path = env->GetStringUTFChars(core_path, nullptr);
     if (!path) return JNI_FALSE;
-    g_core_dl_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    const std::string corePath(path);
     env->ReleaseStringUTFChars(core_path, path);
-    if (!g_core_dl_handle) return JNI_FALSE;
+
+    g_core_dl_handle = dlopen(corePath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!g_core_dl_handle) {
+        LOGE("dlopen failed: %s", dlerror());
+        return JNI_FALSE;
+    }
+
+    // Core lives in <filesDir>/cores/core.so, so expose <filesDir>/system and
+    // <filesDir>/saves to Libretro. This is required for SCPH1001.BIN discovery.
+    const size_t slash = corePath.find_last_of('/');
+    const std::string coreDir = slash == std::string::npos ? std::string() : corePath.substr(0, slash);
+    const size_t parentSlash = coreDir.find_last_of('/');
+    const std::string filesDir = parentSlash == std::string::npos ? coreDir : coreDir.substr(0, parentSlash);
+    g_system_directory = filesDir + "/system";
+    g_save_directory = filesDir + "/saves";
+    ensure_directory(g_system_directory);
+    ensure_directory(g_save_directory);
 
     g_retro_init = (retro_init_t)dlsym(g_core_dl_handle, "retro_init");
     g_retro_deinit = (retro_deinit_t)dlsym(g_core_dl_handle, "retro_deinit");
@@ -111,10 +150,12 @@ JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoad
 
     if (!g_retro_init || !g_retro_deinit || !g_retro_load_game || !g_retro_unload_game || !g_retro_run ||
         !set_env || !set_video || !set_input || !set_poll) {
+        LOGE("Required Libretro symbols are missing");
         dlclose(g_core_dl_handle);
         g_core_dl_handle = nullptr;
         return JNI_FALSE;
     }
+
     set_env(retro_environment_cb);
     set_video(retro_video_refresh_cb);
     if (set_audio) set_audio(retro_audio_sample_cb);
@@ -135,6 +176,7 @@ JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoad
     const bool ok = g_retro_load_game(&info);
     env->ReleaseStringUTFChars(game_path, path);
     g_game_loaded = ok;
+    if (!ok) LOGE("Libretro rejected game path: %s", path);
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -152,6 +194,8 @@ JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeUnloadGa
     g_core_initialized = false;
     if (g_core_dl_handle) dlclose(g_core_dl_handle);
     g_core_dl_handle = nullptr;
+    g_system_directory.clear();
+    g_save_directory.clear();
     g_retro_init = nullptr; g_retro_deinit = nullptr; g_retro_load_game = nullptr;
     g_retro_unload_game = nullptr; g_retro_run = nullptr; g_retro_serialize_size = nullptr;
     g_retro_serialize = nullptr; g_retro_unserialize = nullptr;
