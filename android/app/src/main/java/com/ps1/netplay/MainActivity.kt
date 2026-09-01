@@ -59,9 +59,15 @@ class MainActivity : AppCompatActivity() {
             romPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) handleRomSelected(uri) }
             biosPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) handleBiosSelected(uri) }
             setContentView(R.layout.activity_main)
-            root = findViewById(R.id.main_root); gameContainer = findViewById(R.id.game_view_container); emptyState = findViewById(R.id.game_empty_state)
-            btnSettings = findViewById(R.id.btn_discrete_settings); btnChat = findViewById(R.id.btn_chat); btnConnect = findViewById(R.id.btn_connect)
-            gamepadManager = GamepadManager(); coreManager = CoreManager(this); netplaySession = NetplaySession()
+            root = findViewById(R.id.main_root)
+            gameContainer = findViewById(R.id.game_view_container)
+            emptyState = findViewById(R.id.game_empty_state)
+            btnSettings = findViewById(R.id.btn_discrete_settings)
+            btnChat = findViewById(R.id.btn_chat)
+            btnConnect = findViewById(R.id.btn_connect)
+            gamepadManager = GamepadManager()
+            coreManager = CoreManager(this)
+            netplaySession = NetplaySession()
             temporaryStateStore = TemporaryStateStore(this).also { it.clear() }
             activityScope = CoroutineScope(Dispatchers.Default + Job())
             val roomParam = intent?.data?.getQueryParameter("room")
@@ -87,7 +93,6 @@ class MainActivity : AppCompatActivity() {
             gameContainer.addView(surface, 0)
             gameSurfaceView = surface
             emptyState.visibility = View.GONE
-            // The Surface was created before the core was loaded; bind it again now.
             if (surface.holder.surface.isValid) NativeCoreBridge.safeSetSurface(surface.holder.surface)
         }.onFailure {
             android.util.Log.e("MainActivity", "Surface creation failed", it)
@@ -112,7 +117,8 @@ class MainActivity : AppCompatActivity() {
     private fun openIsolatedSettings() {
         runCatching {
             val dialog = IsolatedSettingsBottomSheet.newInstance()
-            dialog.currentRomTitle = currentRomName; dialog.currentBiosTitle = currentBiosName
+            dialog.currentRomTitle = currentRomName
+            dialog.currentBiosTitle = currentBiosName
             dialog.onLoadRomClicked = { romPickerLauncher?.launch("*/*") }
             dialog.onLoadBiosClicked = { biosPickerLauncher?.launch("*/*") }
             dialog.onLeaveRoomClicked = { netplaySession?.leaveRoom(); finish() }
@@ -128,13 +134,20 @@ class MainActivity : AppCompatActivity() {
             contentResolver.openInputStream(uri)?.use { stream ->
                 val success = manager.importAndLoadRom(stream, fileName)
                 if (success) {
-                    currentRomName = fileName; temporaryStateStore?.clear(); startGameSurface(); startGameLoop()
+                    currentRomName = fileName
+                    temporaryStateStore?.clear()
+                    startGameSurface()
+                    startGameLoop()
                     Toast.makeText(this, "تم تحميل اللعبة: $fileName", Toast.LENGTH_SHORT).show()
-                } else Toast.makeText(this, "تعذر تشغيل الملف المحدد", Toast.LENGTH_LONG).show()
+                } else {
+                    val detail = manager.getLastError().ifBlank { "سبب غير معروف" }
+                    Toast.makeText(this, "تعذر تشغيل اللعبة\n$detail", Toast.LENGTH_LONG).show()
+                    android.util.Log.e("MainActivity", "ROM rejected: $detail")
+                }
             } ?: Toast.makeText(this, "تعذر قراءة ملف اللعبة", Toast.LENGTH_LONG).show()
         }.onFailure {
             android.util.Log.e("MainActivity", "ROM loading failed", it)
-            Toast.makeText(this, "حدث خطأ أثناء تحميل اللعبة", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "حدث خطأ أثناء تحميل اللعبة: ${it.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -143,14 +156,17 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             val fileName = getFileNameFromUri(uri) ?: "SCPH1001.BIN"
             contentResolver.openInputStream(uri)?.use { stream ->
-                if (manager.saveCustomBios(stream, fileName)) { currentBiosName = fileName; Toast.makeText(this, "تم حفظ BIOS: $fileName", Toast.LENGTH_SHORT).show() }
-                else Toast.makeText(this, "تعذر حفظ BIOS", Toast.LENGTH_LONG).show()
+                if (manager.saveCustomBios(stream, fileName)) {
+                    currentBiosName = fileName
+                    Toast.makeText(this, "تم حفظ BIOS: $fileName", Toast.LENGTH_SHORT).show()
+                } else Toast.makeText(this, "تعذر حفظ BIOS", Toast.LENGTH_LONG).show()
             }
         }.onFailure { android.util.Log.e("MainActivity", "BIOS loading failed", it) }
     }
 
     private fun getFileNameFromUri(uri: Uri): String? = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-        val i = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0 && cursor.moveToFirst()) cursor.getString(i) else null
+        val i = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (i >= 0 && cursor.moveToFirst()) cursor.getString(i) else null
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean = if (event != null && gamepadManager?.onKeyDown(keyCode, event) == true) true else super.onKeyDown(keyCode, event)
@@ -163,7 +179,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        isGameRunning = false; activityScope?.cancel(); runCatching { netplaySession?.leaveRoom() }; runCatching { coreManager?.unload() }
-        gameSurfaceView = null; super.onDestroy()
+        isGameRunning = false
+        activityScope?.cancel()
+        runCatching { netplaySession?.leaveRoom() }
+        runCatching { coreManager?.unload() }
+        gameSurfaceView = null
+        super.onDestroy()
     }
 }
