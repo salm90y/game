@@ -1,28 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/main_root"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:orientation="vertical"
+    android:background="#08111F"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
 
-    <!-- Intentionally a plain Android view at startup. The native PS1 surface is
-         created only after a ROM is successfully selected. -->
-    <View
-        android:id="@+id/startup_background"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#000000"
-        android:importantForAccessibility="no" />
+        android:layout_height="48dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="COMBAT 3" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="غرفة لعب ومزامنة PS1" android:textColor="#8FA6C2" android:textSize="11sp" />
+        </LinearLayout>
+        <ImageButton android:id="@+id/btn_discrete_settings" android:layout_width="42dp" android:layout_height="42dp" android:background="@drawable/bg_round_discrete" android:contentDescription="الإعدادات" android:src="@android:drawable/ic_menu_manage" android:alpha="0.8" />
+    </LinearLayout>
 
-    <ImageButton
-        android:id="@+id/btn_discrete_settings"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:layout_gravity="top|end"
-        android:layout_margin="12dp"
-        android:background="@drawable/bg_round_discrete"
-        android:contentDescription="@string/action_settings"
-        android:src="@android:drawable/ic_menu_manage"
-        android:alpha="0.45" />
+    <com.ps1.netplay.ui.SquareFrameLayout
+        android:id="@+id/game_view_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        android:background="#000000">
+        <View android:id="@+id/startup_background" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#000000" />
+    </com.ps1.netplay.ui.SquareFrameLayout>
 
-</FrameLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="12dp" android:gravity="center_vertical" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="غرفة اللعب" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="بانتظار اللاعب الآخر • المزامنة جاهزة" android:textColor="#7F9AB8" android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="64dp" android:gravity="center" android:orientation="horizontal">
+        <Button android:id="@+id/btn_chat" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:layout_marginEnd="6dp" android:text="💬  دردشة" android:textAllCaps="false" />
+        <Button android:id="@+id/btn_connect" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:layout_marginStart="6dp" android:text="🔗  اتصل" android:textAllCaps="false" />
+    </LinearLayout>
+</LinearLayout>
