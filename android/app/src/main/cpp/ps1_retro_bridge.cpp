@@ -40,18 +40,42 @@ static void set_error(const std::string &message) {
     LOGE("%s", g_last_error.c_str());
 }
 
+/*
+ * Libretro gives us the native PS1 framebuffer size (usually 320x240/368x240),
+ * while the Android game surface is a square. The old bridge copied only the
+ * top-left portion, which made the game appear as a tiny image in the corner.
+ * Scale every frame to the complete ANativeWindow buffer using nearest-neighbor
+ * sampling. This keeps the emulator surface completely filled and predictable.
+ */
 static void retro_video_refresh_cb(const void *data, unsigned width, unsigned height, size_t pitch) {
     if (!data || !g_native_window || !width || !height) return;
+
     ANativeWindow_Buffer b;
     if (ANativeWindow_lock(g_native_window, &b, nullptr) != 0) return;
+    if (!b.bits || b.width <= 0 || b.height <= 0) {
+        ANativeWindow_unlockAndPost(g_native_window);
+        return;
+    }
+
     const size_t bpp = g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888 ? 4u : 2u;
-    const size_t src_row = static_cast<size_t>(width) * bpp;
-    const size_t dst_row = static_cast<size_t>(b.stride) * bpp;
-    const unsigned rows = height < static_cast<unsigned>(b.height) ? height : static_cast<unsigned>(b.height);
     const auto *src = static_cast<const uint8_t *>(data);
     auto *dst = static_cast<uint8_t *>(b.bits);
-    const size_t copy_bytes = src_row < dst_row ? src_row : dst_row;
-    for (unsigned y = 0; y < rows; ++y) memcpy(dst + y * dst_row, src + y * pitch, copy_bytes);
+    const size_t dstRowBytes = static_cast<size_t>(b.stride) * bpp;
+    const unsigned dstWidth = static_cast<unsigned>(b.width);
+    const unsigned dstHeight = static_cast<unsigned>(b.height);
+
+    for (unsigned y = 0; y < dstHeight; ++y) {
+        const unsigned sy = static_cast<unsigned>((static_cast<uint64_t>(y) * height) / dstHeight);
+        const auto *srcRow = src + static_cast<size_t>(sy) * pitch;
+        auto *dstRow = dst + static_cast<size_t>(y) * dstRowBytes;
+        for (unsigned x = 0; x < dstWidth; ++x) {
+            const unsigned sx = static_cast<unsigned>((static_cast<uint64_t>(x) * width) / dstWidth);
+            memcpy(dstRow + static_cast<size_t>(x) * bpp,
+                   srcRow + static_cast<size_t>(sx) * bpp,
+                   bpp);
+        }
+    }
+
     ANativeWindow_unlockAndPost(g_native_window);
 }
 
@@ -259,27 +283,29 @@ JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetSurfa
     if (surface) g_native_window = ANativeWindow_fromSurface(env, surface);
 }
 
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetInput(JNIEnv*, jobject, jint p1, jint p2) {
+    g_p1_input_mask = static_cast<uint16_t>(p1);
+    g_p2_input_mask = static_cast<uint16_t>(p2);
+}
+
 JNIEXPORT jbyteArray JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSaveState(JNIEnv *env, jobject) {
-    if (!g_game_loaded || !g_retro_serialize_size || !g_retro_serialize) return nullptr;
-    const size_t n = g_retro_serialize_size();
-    if (!n || n > 64u * 1024u * 1024u) return nullptr;
-    std::vector<uint8_t> s(n);
-    if (!g_retro_serialize(s.data(), n)) return nullptr;
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(n));
-    if (!out) return nullptr;
-    env->SetByteArrayRegion(out, 0, static_cast<jsize>(n), reinterpret_cast<const jbyte*>(s.data()));
-    return out;
+    if (!g_core_initialized || !g_game_loaded || !g_retro_serialize_size || !g_retro_serialize) return nullptr;
+    const size_t size = g_retro_serialize_size();
+    if (size == 0) return nullptr;
+    std::vector<uint8_t> bytes(size);
+    if (!g_retro_serialize(bytes.data(), size)) return nullptr;
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(size));
+    if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(bytes.data()));
+    return result;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadState(JNIEnv *env, jobject, jbyteArray a) {
-    if (!g_game_loaded || !g_retro_unserialize || !a) return JNI_FALSE;
-    const jsize n = env->GetArrayLength(a);
-    if (n <= 0 || n > 64 * 1024 * 1024) return JNI_FALSE;
-    jbyte *b = env->GetByteArrayElements(a, nullptr);
-    if (!b) return JNI_FALSE;
-    const bool ok = g_retro_unserialize(b, static_cast<size_t>(n));
-    env->ReleaseByteArrayElements(a, b, JNI_ABORT);
-    return ok ? JNI_TRUE : JNI_FALSE;
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadState(JNIEnv *env, jobject, jbyteArray state) {
+    if (!g_core_initialized || !g_game_loaded || !g_retro_unserialize || !state) return JNI_FALSE;
+    const jsize size = env->GetArrayLength(state);
+    if (size <= 0) return JNI_FALSE;
+    std::vector<uint8_t> bytes(static_cast<size_t>(size));
+    env->GetByteArrayRegion(state, 0, size, reinterpret_cast<jbyte *>(bytes.data()));
+    return g_retro_unserialize(bytes.data(), static_cast<size_t>(size)) ? JNI_TRUE : JNI_FALSE;
 }
 
-}
+} // extern "C"
