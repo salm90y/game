@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:layoutDirection="rtl"
-    android:background="#08111F">
+    android:background="#07111F">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -17,7 +17,7 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="54dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
             <LinearLayout
@@ -31,23 +31,24 @@
                     android:layout_height="wrap_content"
                     android:text="COMBAT 3"
                     android:textColor="#FFFFFF"
-                    android:textSize="19sp"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
                 <TextView
+                    android:id="@+id/txt_room_subtitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="غرفة لعب ومزامنة PS1"
-                    android:textColor="#8FA6C2"
+                    android:text="غرفة مزامنة PS1 • متصل"
+                    android:textColor="#7DD3FC"
                     android:textSize="11sp" />
             </LinearLayout>
             <ImageButton
                 android:id="@+id/btn_discrete_settings"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:background="@drawable/bg_round_discrete"
                 android:contentDescription="الإعدادات"
                 android:src="@android:drawable/ic_menu_manage"
-                android:alpha="0.82" />
+                android:alpha="0.9" />
         </LinearLayout>
 
         <com.ps1.netplay.ui.SquareFrameLayout
@@ -62,6 +63,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center"
+                android:padding="24dp"
                 android:text="🎮\nCombat 3\n\nأضف اللعبة من الإعدادات لبدء اللعب"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
@@ -72,56 +74,80 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="12dp"
-            android:gravity="center_vertical"
-            android:orientation="vertical">
-            <TextView
-                android:layout_width="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="غرفة اللعب"
-                android:textColor="#FFFFFF"
-                android:textSize="19sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="غرفة المزامنة"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/txt_room_code"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="#17263A"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="7dp"
+                    android:paddingBottom="7dp"
+                    android:text="ROOM ----"
+                    android:textColor="#C4B5FD"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="●  المزامنة جاهزة  •  بانتظار اللاعب الآخر"
-                android:textColor="#69D3A7"
-                android:textSize="12sp" />
-            <TextView
+                android:id="@+id/txt_sync_status"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="7dp"
-                android:text="اللعب المشترك • اتصال مباشر بين اللاعبين"
+                android:text="●  المزامنة جاهزة  •  بانتظار اللاعب الآخر"
+                android:textColor="#69D3A7"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="اللعب المشترك • مزامنة الإدخال والحالة بين اللاعبين"
                 android:textColor="#7891AD"
                 android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="64dp"
+            android:layout_height="66dp"
             android:gravity="center"
             android:orientation="horizontal">
             <Button
                 android:id="@+id/btn_chat"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="54dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="6dp"
                 android:background="@drawable/bg_room_button"
-                android:text="💬  دردشة"
+                android:text="💬  الدردشة"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
                 android:textAllCaps="false" />
             <Button
                 android:id="@+id/btn_connect"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="54dp"
                 android:layout_weight="1"
                 android:layout_marginStart="6dp"
                 android:background="@drawable/bg_connect_button"
-                android:text="🔗  اتصل"
+                android:text="🔗  الغرفة"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
                 android:textAllCaps="false" />
