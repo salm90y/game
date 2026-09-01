@@ -29,6 +29,7 @@ object NativeCoreBridge {
     external fun nativeSetDirectories(systemPath: String, savePath: String): Boolean
     external fun nativeLoadCore(corePath: String): Boolean
     external fun nativeLoadGame(gamePath: String): Boolean
+    external fun nativeGetLastError(): String
     external fun nativeRunFrame(p1Mask: Int, p2Mask: Int)
     external fun nativeUnloadGame()
     external fun nativeSetSurface(surface: Surface?)
@@ -49,6 +50,9 @@ object NativeCoreBridge {
         if (ensureLoaded()) runCatching { nativeLoadGame(gamePath) }.getOrElse {
             Log.e(TAG, "nativeLoadGame failed", it); false
         } else false
+
+    fun lastError(): String =
+        if (ensureLoaded()) runCatching { nativeGetLastError() }.getOrDefault("") else "Native bridge unavailable"
 
     fun safeRunFrame(p1Mask: Int, p2Mask: Int) {
         if (libraryLoaded) runCatching { nativeRunFrame(p1Mask, p2Mask) }
