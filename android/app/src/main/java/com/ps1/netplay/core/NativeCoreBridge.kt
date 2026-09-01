@@ -3,10 +3,8 @@ package com.ps1.netplay.core
 import android.util.Log
 import android.view.Surface
 
-/** JNI bridge. The native library is deliberately loaded lazily, never during launcher startup. */
 object NativeCoreBridge {
     private const val TAG = "NativeCoreBridge"
-
     @Volatile private var libraryLoaded = false
     @Volatile private var loadAttempted = false
 
@@ -18,17 +16,17 @@ object NativeCoreBridge {
         return try {
             System.loadLibrary("ps1_netplay_core")
             libraryLoaded = true
-            Log.i(TAG, "Native library loaded")
+            Log.i(TAG, "Native bridge loaded")
             true
         } catch (t: Throwable) {
-            libraryLoaded = false
-            Log.e(TAG, "Native library unavailable", t)
+            Log.e(TAG, "Native bridge unavailable", t)
             false
         }
     }
 
     fun isAvailable(): Boolean = libraryLoaded
 
+    external fun nativeSetDirectories(systemPath: String, savePath: String): Boolean
     external fun nativeLoadCore(corePath: String): Boolean
     external fun nativeLoadGame(gamePath: String): Boolean
     external fun nativeRunFrame(p1Mask: Int, p2Mask: Int)
@@ -36,6 +34,11 @@ object NativeCoreBridge {
     external fun nativeSetSurface(surface: Surface?)
     external fun nativeSaveState(): ByteArray?
     external fun nativeLoadState(stateBytes: ByteArray): Boolean
+
+    fun safeSetDirectories(systemPath: String, savePath: String): Boolean =
+        if (ensureLoaded()) runCatching { nativeSetDirectories(systemPath, savePath) }.getOrElse {
+            Log.e(TAG, "nativeSetDirectories failed", it); false
+        } else false
 
     fun safeLoadCore(corePath: String): Boolean =
         if (ensureLoaded()) runCatching { nativeLoadCore(corePath) }.getOrElse {
@@ -58,7 +61,6 @@ object NativeCoreBridge {
     }
 
     fun safeSetSurface(surface: Surface?) {
-        // Do not load JNI merely because Android creates the Surface during launch.
         if (libraryLoaded) runCatching { nativeSetSurface(surface) }
             .onFailure { Log.e(TAG, "nativeSetSurface failed", it) }
     }
