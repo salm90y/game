@@ -30,6 +30,33 @@ jobs:
           yes | sdkmanager --licenses || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
 
+      - name: Download official Libretro PS1 cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://buildbot.libretro.com/nightly/android/latest"
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          mkdir -p android/app/src/main/jniLibs/x86_64
+
+          download_core() {
+            local abi="$1"
+            local zip="/tmp/mednafen-${abi}.zip"
+            local dir="android/app/src/main/jniLibs/${abi}"
+            curl --fail --location --retry 3 --silent --show-error \
+              "${BASE}/${abi}/mednafen_psx_hw_libretro_android.so.zip" -o "$zip"
+            unzip -j -o "$zip" '*.so' -d "$dir"
+            # Android's native library packager expects the conventional lib*.so name.
+            if [ -f "$dir/mednafen_psx_hw_libretro_android.so" ]; then
+              mv "$dir/mednafen_psx_hw_libretro_android.so" "$dir/libmednafen_psx_hw_libretro_android.so"
+            fi
+            test -s "$dir/libmednafen_psx_hw_libretro_android.so"
+          }
+
+          download_core arm64-v8a
+          download_core armeabi-v7a
+          download_core x86_64
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
