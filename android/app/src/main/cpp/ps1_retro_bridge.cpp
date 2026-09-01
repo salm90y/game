@@ -7,27 +7,279 @@
 #include <string>
 #include <vector>
 #include <sys/stat.h>
+
 #define LOG_TAG "PS1NativeBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
 static constexpr unsigned RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9;
+static constexpr unsigned RETRO_ENVIRONMENT_SET_PIXEL_FORMAT = 10;
 static constexpr unsigned RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY = 31;
-static void *g_core_dl_handle=nullptr; static ANativeWindow *g_native_window=nullptr; static bool g_core_initialized=false; static bool g_game_loaded=false;
-static std::string g_system_directory; static std::string g_save_directory;
-static retro_init_t g_retro_init=nullptr; static retro_deinit_t g_retro_deinit=nullptr; static retro_load_game_t g_retro_load_game=nullptr; static retro_unload_game_t g_retro_unload_game=nullptr; static retro_run_t g_retro_run=nullptr; static retro_serialize_size_t g_retro_serialize_size=nullptr; static retro_serialize_t g_retro_serialize=nullptr; static retro_unserialize_t g_retro_unserialize=nullptr;
-static enum retro_pixel_format g_pixel_format=RETRO_PIXEL_FORMAT_RGB565; static uint16_t g_p1_input_mask=0,g_p2_input_mask=0;
-static void retro_video_refresh_cb(const void* data,unsigned width,unsigned height,size_t pitch){ if(!data||!g_native_window||!width||!height)return; ANativeWindow_Buffer b; if(ANativeWindow_lock(g_native_window,&b,nullptr)!=0)return; const size_t bpp=g_pixel_format==RETRO_PIXEL_FORMAT_XRGB8888?4u:2u; const size_t sr=static_cast<size_t>(width)*bpp,dr=static_cast<size_t>(b.stride)*bpp; const unsigned rows=height<static_cast<unsigned>(b.height)?height:static_cast<unsigned>(b.height); auto*s=static_cast<const uint8_t*>(data);auto*d=static_cast<uint8_t*>(b.bits); for(unsigned y=0;y<rows;y++)memcpy(d+y*dr,s+y*pitch,sr<dr?sr:dr); ANativeWindow_unlockAndPost(g_native_window); }
-static size_t retro_audio_sample_batch_cb(const int16_t*,size_t frames){return frames;} static void retro_audio_sample_cb(int16_t,int16_t){} static void retro_input_poll_cb(void){}
-static int16_t retro_input_state_cb(unsigned port,unsigned device,unsigned,unsigned id){if(device!=RETRO_DEVICE_JOYPAD)return 0;uint16_t m=port==0?g_p1_input_mask:g_p2_input_mask;switch(id){case RETRO_DEVICE_ID_JOYPAD_B:return(m&(1<<0))?1:0;case RETRO_DEVICE_ID_JOYPAD_A:return(m&(1<<1))?1:0;case RETRO_DEVICE_ID_JOYPAD_Y:return(m&(1<<2))?1:0;case RETRO_DEVICE_ID_JOYPAD_X:return(m&(1<<3))?1:0;case RETRO_DEVICE_ID_JOYPAD_L:return(m&(1<<4))?1:0;case RETRO_DEVICE_ID_JOYPAD_R:return(m&(1<<5))?1:0;case RETRO_DEVICE_ID_JOYPAD_L2:return(m&(1<<6))?1:0;case RETRO_DEVICE_ID_JOYPAD_R2:return(m&(1<<7))?1:0;case RETRO_DEVICE_ID_JOYPAD_SELECT:return(m&(1<<8))?1:0;case RETRO_DEVICE_ID_JOYPAD_START:return(m&(1<<9))?1:0;case RETRO_DEVICE_ID_JOYPAD_UP:return(m&(1<<12))?1:0;case RETRO_DEVICE_ID_JOYPAD_DOWN:return(m&(1<<13))?1:0;case RETRO_DEVICE_ID_JOYPAD_LEFT:return(m&(1<<14))?1:0;case RETRO_DEVICE_ID_JOYPAD_RIGHT:return(m&(1<<15))?1:0;default:return 0;}}
-static bool retro_environment_cb(unsigned cmd,void*data){if(!data)return false;switch(cmd){case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:if(g_system_directory.empty())return false;*static_cast<const char**>(data)=g_system_directory.c_str();return true;case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:if(g_save_directory.empty())return false;*static_cast<const char**>(data)=g_save_directory.c_str();return true;case 10:g_pixel_format=*static_cast<enum retro_pixel_format*>(data);return g_pixel_format==RETRO_PIXEL_FORMAT_RGB565||g_pixel_format==RETRO_PIXEL_FORMAT_XRGB8888;case 3:*static_cast<bool*>(data)=true;return true;default:return false;}}
-static void ensure_directory(const std::string&p){if(!p.empty())mkdir(p.c_str(),0700);}
+
+static void *g_core_dl_handle = nullptr;
+static ANativeWindow *g_native_window = nullptr;
+static bool g_core_initialized = false;
+static bool g_game_loaded = false;
+static std::string g_system_directory;
+static std::string g_save_directory;
+static std::string g_last_error;
+
+static retro_init_t g_retro_init = nullptr;
+static retro_deinit_t g_retro_deinit = nullptr;
+static retro_load_game_t g_retro_load_game = nullptr;
+static retro_unload_game_t g_retro_unload_game = nullptr;
+static retro_run_t g_retro_run = nullptr;
+static retro_serialize_size_t g_retro_serialize_size = nullptr;
+static retro_serialize_t g_retro_serialize = nullptr;
+static retro_unserialize_t g_retro_unserialize = nullptr;
+static enum retro_pixel_format g_pixel_format = RETRO_PIXEL_FORMAT_RGB565;
+static uint16_t g_p1_input_mask = 0, g_p2_input_mask = 0;
+
+static void set_error(const std::string &message) {
+    g_last_error = message;
+    LOGE("%s", g_last_error.c_str());
+}
+
+static void retro_video_refresh_cb(const void *data, unsigned width, unsigned height, size_t pitch) {
+    if (!data || !g_native_window || !width || !height) return;
+    ANativeWindow_Buffer b;
+    if (ANativeWindow_lock(g_native_window, &b, nullptr) != 0) return;
+    const size_t bpp = g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888 ? 4u : 2u;
+    const size_t src_row = static_cast<size_t>(width) * bpp;
+    const size_t dst_row = static_cast<size_t>(b.stride) * bpp;
+    const unsigned rows = height < static_cast<unsigned>(b.height) ? height : static_cast<unsigned>(b.height);
+    const auto *src = static_cast<const uint8_t *>(data);
+    auto *dst = static_cast<uint8_t *>(b.bits);
+    const size_t copy_bytes = src_row < dst_row ? src_row : dst_row;
+    for (unsigned y = 0; y < rows; ++y) memcpy(dst + y * dst_row, src + y * pitch, copy_bytes);
+    ANativeWindow_unlockAndPost(g_native_window);
+}
+
+static size_t retro_audio_sample_batch_cb(const int16_t *, size_t frames) { return frames; }
+static void retro_audio_sample_cb(int16_t, int16_t) {}
+static void retro_input_poll_cb(void) {}
+
+static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned, unsigned id) {
+    if (device != RETRO_DEVICE_JOYPAD) return 0;
+    const uint16_t m = port == 0 ? g_p1_input_mask : g_p2_input_mask;
+    switch (id) {
+        case RETRO_DEVICE_ID_JOYPAD_B: return (m & (1 << 0)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_A: return (m & (1 << 1)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_Y: return (m & (1 << 2)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_X: return (m & (1 << 3)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_L: return (m & (1 << 4)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_R: return (m & (1 << 5)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_L2: return (m & (1 << 6)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_R2: return (m & (1 << 7)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_SELECT: return (m & (1 << 8)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_START: return (m & (1 << 9)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_UP: return (m & (1 << 12)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_DOWN: return (m & (1 << 13)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_LEFT: return (m & (1 << 14)) ? 1 : 0;
+        case RETRO_DEVICE_ID_JOYPAD_RIGHT: return (m & (1 << 15)) ? 1 : 0;
+        default: return 0;
+    }
+}
+
+static bool retro_environment_cb(unsigned cmd, void *data) {
+    if (!data) return false;
+    switch (cmd) {
+        case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+            if (g_system_directory.empty()) return false;
+            *static_cast<const char **>(data) = g_system_directory.c_str();
+            return true;
+        case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+            if (g_save_directory.empty()) return false;
+            *static_cast<const char **>(data) = g_save_directory.c_str();
+            return true;
+        case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+            g_pixel_format = *static_cast<enum retro_pixel_format *>(data);
+            return g_pixel_format == RETRO_PIXEL_FORMAT_RGB565 || g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888;
+        case 3:
+            *static_cast<bool *>(data) = true;
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void ensure_directory(const std::string &p) {
+    if (!p.empty()) mkdir(p.c_str(), 0700);
+}
+
 extern "C" {
-JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetDirectories(JNIEnv*env,jobject,jstring system_path,jstring save_path){if(!system_path||!save_path)return JNI_FALSE;const char*s=env->GetStringUTFChars(system_path,nullptr);const char*v=env->GetStringUTFChars(save_path,nullptr);if(!s||!v){if(s)env->ReleaseStringUTFChars(system_path,s);if(v)env->ReleaseStringUTFChars(save_path,v);return JNI_FALSE;}g_system_directory=s;g_save_directory=v;env->ReleaseStringUTFChars(system_path,s);env->ReleaseStringUTFChars(save_path,v);ensure_directory(g_system_directory);ensure_directory(g_save_directory);LOGI("system=%s saves=%s",g_system_directory.c_str(),g_save_directory.c_str());return JNI_TRUE;}
-JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(JNIEnv*env,jobject,jstring core_path){if(!core_path||g_core_dl_handle)return g_core_initialized?JNI_TRUE:JNI_FALSE;const char*p=env->GetStringUTFChars(core_path,nullptr);if(!p)return JNI_FALSE;std::string cp(p);env->ReleaseStringUTFChars(core_path,p);g_core_dl_handle=dlopen(cp.c_str(),RTLD_NOW|RTLD_LOCAL);if(!g_core_dl_handle){LOGE("dlopen failed: %s",dlerror());return JNI_FALSE;}g_retro_init=(retro_init_t)dlsym(g_core_dl_handle,"retro_init");g_retro_deinit=(retro_deinit_t)dlsym(g_core_dl_handle,"retro_deinit");g_retro_load_game=(retro_load_game_t)dlsym(g_core_dl_handle,"retro_load_game");g_retro_unload_game=(retro_unload_game_t)dlsym(g_core_dl_handle,"retro_unload_game");g_retro_run=(retro_run_t)dlsym(g_core_dl_handle,"retro_run");g_retro_serialize_size=(retro_serialize_size_t)dlsym(g_core_dl_handle,"retro_serialize_size");g_retro_serialize=(retro_serialize_t)dlsym(g_core_dl_handle,"retro_serialize");g_retro_unserialize=(retro_unserialize_t)dlsym(g_core_dl_handle,"retro_unserialize");auto se=(retro_set_environment_t)dlsym(g_core_dl_handle,"retro_set_environment");auto sv=(retro_set_video_refresh_t)dlsym(g_core_dl_handle,"retro_set_video_refresh");auto sa=(retro_set_audio_sample_t)dlsym(g_core_dl_handle,"retro_set_audio_sample");auto sb=(retro_set_audio_sample_batch_t)dlsym(g_core_dl_handle,"retro_set_audio_sample_batch");auto si=(retro_set_input_state_t)dlsym(g_core_dl_handle,"retro_set_input_state");auto sp=(retro_set_input_poll_t)dlsym(g_core_dl_handle,"retro_set_input_poll");if(!g_retro_init||!g_retro_deinit||!g_retro_load_game||!g_retro_unload_game||!g_retro_run||!se||!sv||!si||!sp){LOGE("Required Libretro symbols missing");dlclose(g_core_dl_handle);g_core_dl_handle=nullptr;return JNI_FALSE;}se(retro_environment_cb);sv(retro_video_refresh_cb);if(sa)sa(retro_audio_sample_cb);if(sb)sb(retro_audio_sample_batch_cb);si(retro_input_state_cb);sp(retro_input_poll_cb);g_retro_init();g_core_initialized=true;return JNI_TRUE;}
-JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadGame(JNIEnv*env,jobject,jstring game_path){if(!g_core_initialized||!g_retro_load_game||!game_path)return JNI_FALSE;const char*p=env->GetStringUTFChars(game_path,nullptr);if(!p)return JNI_FALSE;retro_game_info info={};info.path=p;const bool ok=g_retro_load_game(&info);env->ReleaseStringUTFChars(game_path,p);g_game_loaded=ok;if(!ok)LOGE("Libretro rejected game path");return ok?JNI_TRUE:JNI_FALSE;}
-JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeRunFrame(JNIEnv*,jobject,jint p1,jint p2){if(!g_core_initialized||!g_game_loaded||!g_retro_run)return;g_p1_input_mask=(uint16_t)p1;g_p2_input_mask=(uint16_t)p2;g_retro_run();}
-JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeUnloadGame(JNIEnv*,jobject){if(g_game_loaded&&g_retro_unload_game)g_retro_unload_game();if(g_core_initialized&&g_retro_deinit)g_retro_deinit();g_game_loaded=false;g_core_initialized=false;if(g_core_dl_handle)dlclose(g_core_dl_handle);g_core_dl_handle=nullptr;g_retro_init=nullptr;g_retro_deinit=nullptr;g_retro_load_game=nullptr;g_retro_unload_game=nullptr;g_retro_run=nullptr;g_retro_serialize_size=nullptr;g_retro_serialize=nullptr;g_retro_unserialize=nullptr;if(g_native_window){ANativeWindow_release(g_native_window);g_native_window=nullptr;}}
-JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetSurface(JNIEnv*env,jobject,jobject surface){if(g_native_window){ANativeWindow_release(g_native_window);g_native_window=nullptr;}if(surface)g_native_window=ANativeWindow_fromSurface(env,surface);}
-JNIEXPORT jbyteArray JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSaveState(JNIEnv*env,jobject){if(!g_game_loaded||!g_retro_serialize_size||!g_retro_serialize)return nullptr;size_t n=g_retro_serialize_size();if(!n||n>64u*1024u*1024u)return nullptr;std::vector<uint8_t>s(n);if(!g_retro_serialize(s.data(),n))return nullptr;jbyteArray out=env->NewByteArray((jsize)n);if(!out)return nullptr;env->SetByteArrayRegion(out,0,(jsize)n,(const jbyte*)s.data());return out;}
-JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadState(JNIEnv*env,jobject,jbyteArray a){if(!g_game_loaded||!g_retro_unserialize||!a)return JNI_FALSE;jsize n=env->GetArrayLength(a);if(n<=0||n>64*1024*1024)return JNI_FALSE;jbyte*b=env->GetByteArrayElements(a,nullptr);if(!b)return JNI_FALSE;bool ok=g_retro_unserialize(b,(size_t)n);env->ReleaseByteArrayElements(a,b,JNI_ABORT);return ok?JNI_TRUE:JNI_FALSE;}
+
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetDirectories(
+        JNIEnv *env, jobject, jstring system_path, jstring save_path) {
+    if (!system_path || !save_path) { set_error("system/save path is null"); return JNI_FALSE; }
+    const char *s = env->GetStringUTFChars(system_path, nullptr);
+    const char *v = env->GetStringUTFChars(save_path, nullptr);
+    if (!s || !v) {
+        if (s) env->ReleaseStringUTFChars(system_path, s);
+        if (v) env->ReleaseStringUTFChars(save_path, v);
+        set_error("could not read system/save path");
+        return JNI_FALSE;
+    }
+    g_system_directory = s;
+    g_save_directory = v;
+    env->ReleaseStringUTFChars(system_path, s);
+    env->ReleaseStringUTFChars(save_path, v);
+    ensure_directory(g_system_directory);
+    ensure_directory(g_save_directory);
+    LOGI("system=%s saves=%s", g_system_directory.c_str(), g_save_directory.c_str());
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadCore(
+        JNIEnv *env, jobject, jstring core_path) {
+    if (!core_path) { set_error("core path is null"); return JNI_FALSE; }
+    if (g_core_dl_handle) return g_core_initialized ? JNI_TRUE : JNI_FALSE;
+    const char *p = env->GetStringUTFChars(core_path, nullptr);
+    if (!p) { set_error("could not read core path"); return JNI_FALSE; }
+    const std::string cp(p);
+    env->ReleaseStringUTFChars(core_path, p);
+
+    struct stat st{};
+    if (stat(cp.c_str(), &st) != 0 || st.st_size <= 0) {
+        set_error("PS1 core file is missing or empty: " + cp);
+        return JNI_FALSE;
+    }
+
+    dlerror();
+    g_core_dl_handle = dlopen(cp.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!g_core_dl_handle) {
+        const char *err = dlerror();
+        set_error(std::string("dlopen failed: ") + (err ? err : "unknown linker error"));
+        return JNI_FALSE;
+    }
+
+    g_retro_init = (retro_init_t)dlsym(g_core_dl_handle, "retro_init");
+    g_retro_deinit = (retro_deinit_t)dlsym(g_core_dl_handle, "retro_deinit");
+    g_retro_load_game = (retro_load_game_t)dlsym(g_core_dl_handle, "retro_load_game");
+    g_retro_unload_game = (retro_unload_game_t)dlsym(g_core_dl_handle, "retro_unload_game");
+    g_retro_run = (retro_run_t)dlsym(g_core_dl_handle, "retro_run");
+    g_retro_serialize_size = (retro_serialize_size_t)dlsym(g_core_dl_handle, "retro_serialize_size");
+    g_retro_serialize = (retro_serialize_t)dlsym(g_core_dl_handle, "retro_serialize");
+    g_retro_unserialize = (retro_unserialize_t)dlsym(g_core_dl_handle, "retro_unserialize");
+    auto se = (retro_set_environment_t)dlsym(g_core_dl_handle, "retro_set_environment");
+    auto sv = (retro_set_video_refresh_t)dlsym(g_core_dl_handle, "retro_set_video_refresh");
+    auto sa = (retro_set_audio_sample_t)dlsym(g_core_dl_handle, "retro_set_audio_sample");
+    auto sb = (retro_set_audio_sample_batch_t)dlsym(g_core_dl_handle, "retro_set_audio_sample_batch");
+    auto si = (retro_set_input_state_t)dlsym(g_core_dl_handle, "retro_set_input_state");
+    auto sp = (retro_set_input_poll_t)dlsym(g_core_dl_handle, "retro_set_input_poll");
+
+    if (!g_retro_init || !g_retro_deinit || !g_retro_load_game || !g_retro_unload_game ||
+        !g_retro_run || !se || !sv || !si || !sp) {
+        set_error("PS1 core is incompatible: required Libretro symbols are missing");
+        dlclose(g_core_dl_handle);
+        g_core_dl_handle = nullptr;
+        return JNI_FALSE;
+    }
+
+    se(retro_environment_cb);
+    sv(retro_video_refresh_cb);
+    if (sa) sa(retro_audio_sample_cb);
+    if (sb) sb(retro_audio_sample_batch_cb);
+    si(retro_input_state_cb);
+    sp(retro_input_poll_cb);
+    g_retro_init();
+    g_core_initialized = true;
+    g_last_error.clear();
+    LOGI("PS1 core initialized: %s", cp.c_str());
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadGame(
+        JNIEnv *env, jobject, jstring game_path) {
+    if (!g_core_initialized || !g_retro_load_game || !game_path) {
+        set_error("PS1 core is not initialized");
+        return JNI_FALSE;
+    }
+    const char *p = env->GetStringUTFChars(game_path, nullptr);
+    if (!p) { set_error("could not read game path"); return JNI_FALSE; }
+    const std::string gp(p);
+    env->ReleaseStringUTFChars(game_path, p);
+
+    struct stat st{};
+    if (stat(gp.c_str(), &st) != 0 || st.st_size <= 0) {
+        set_error("game image is missing or empty: " + gp);
+        return JNI_FALSE;
+    }
+
+    retro_game_info info{};
+    info.path = gp.c_str();
+    const bool ok = g_retro_load_game(&info);
+    g_game_loaded = ok;
+    if (!ok) {
+        set_error("Libretro rejected the PS1 image: " + gp);
+        return JNI_FALSE;
+    }
+    g_last_error.clear();
+    LOGI("PS1 game loaded: %s (%lld bytes)", gp.c_str(), static_cast<long long>(st.st_size));
+    return JNI_TRUE;
+}
+
+JNIEXPORT jstring JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeGetLastError(JNIEnv *env, jobject) {
+    return env->NewStringUTF(g_last_error.c_str());
+}
+
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeRunFrame(JNIEnv*, jobject, jint p1, jint p2) {
+    if (!g_core_initialized || !g_game_loaded || !g_retro_run) return;
+    g_p1_input_mask = static_cast<uint16_t>(p1);
+    g_p2_input_mask = static_cast<uint16_t>(p2);
+    g_retro_run();
+}
+
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeUnloadGame(JNIEnv*, jobject) {
+    if (g_game_loaded && g_retro_unload_game) g_retro_unload_game();
+    if (g_core_initialized && g_retro_deinit) g_retro_deinit();
+    g_game_loaded = false;
+    g_core_initialized = false;
+    if (g_core_dl_handle) dlclose(g_core_dl_handle);
+    g_core_dl_handle = nullptr;
+    g_retro_init = nullptr;
+    g_retro_deinit = nullptr;
+    g_retro_load_game = nullptr;
+    g_retro_unload_game = nullptr;
+    g_retro_run = nullptr;
+    g_retro_serialize_size = nullptr;
+    g_retro_serialize = nullptr;
+    g_retro_unserialize = nullptr;
+    if (g_native_window) {
+        ANativeWindow_release(g_native_window);
+        g_native_window = nullptr;
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSetSurface(JNIEnv *env, jobject, jobject surface) {
+    if (g_native_window) {
+        ANativeWindow_release(g_native_window);
+        g_native_window = nullptr;
+    }
+    if (surface) g_native_window = ANativeWindow_fromSurface(env, surface);
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeSaveState(JNIEnv *env, jobject) {
+    if (!g_game_loaded || !g_retro_serialize_size || !g_retro_serialize) return nullptr;
+    const size_t n = g_retro_serialize_size();
+    if (!n || n > 64u * 1024u * 1024u) return nullptr;
+    std::vector<uint8_t> s(n);
+    if (!g_retro_serialize(s.data(), n)) return nullptr;
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(n));
+    if (!out) return nullptr;
+    env->SetByteArrayRegion(out, 0, static_cast<jsize>(n), reinterpret_cast<const jbyte*>(s.data()));
+    return out;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoadState(JNIEnv *env, jobject, jbyteArray a) {
+    if (!g_game_loaded || !g_retro_unserialize || !a) return JNI_FALSE;
+    const jsize n = env->GetArrayLength(a);
+    if (n <= 0 || n > 64 * 1024 * 1024) return JNI_FALSE;
+    jbyte *b = env->GetByteArrayElements(a, nullptr);
+    if (!b) return JNI_FALSE;
+    const bool ok = g_retro_unserialize(b, static_cast<size_t>(n));
+    env->ReleaseByteArrayElements(a, b, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 }
