@@ -9,8 +9,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.ps1.netplay.core.CoreManager
@@ -20,53 +22,100 @@ import com.ps1.netplay.network.MatchCoordinator
 import com.ps1.netplay.network.NetplaySession
 import com.ps1.netplay.ui.GameSurfaceView
 import com.ps1.netplay.ui.IsolatedSettingsBottomSheet
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
+/**
+ * Launcher-safe Activity.
+ * No gamepad/network/native/custom-surface objects are constructed as field
+ * initializers. The first screen is deliberately plain Android UI; the PS1
+ * surface is created only after a ROM has been selected successfully.
+ */
 class MainActivity : AppCompatActivity() {
-    private lateinit var gameSurfaceView: GameSurfaceView
+    private lateinit var root: FrameLayout
     private lateinit var btnSettings: ImageButton
-    private val gamepadManager = GamepadManager()
-    private lateinit var coreManager: CoreManager
-    private val netplaySession = NetplaySession()
+    private var gameSurfaceView: GameSurfaceView? = null
+
+    private var gamepadManager: GamepadManager? = null
+    private var coreManager: CoreManager? = null
+    private var netplaySession: NetplaySession? = null
     private var matchCoordinator: MatchCoordinator? = null
-    private lateinit var temporaryStateStore: TemporaryStateStore
+    private var temporaryStateStore: TemporaryStateStore? = null
+    private var romPickerLauncher: ActivityResultLauncher<String>? = null
+    private var biosPickerLauncher: ActivityResultLauncher<String>? = null
+    private var activityScope: CoroutineScope? = null
+
     private var currentRomName = "Combat 3 (Built-in)"
     private var currentBiosName = "HLE High-Level Emulation (تلقائي)"
-    private val activityScope = CoroutineScope(Dispatchers.Default + Job())
     private var isGameRunning = false
-
-    private val romPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { handleRomSelected(it) } }
-    private val biosPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { handleBiosSelected(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        hideSystemUI()
+
+        // Keep even system UI handling isolated from Activity construction.
+        runCatching { hideSystemUI() }
+
         try {
+            // Register launchers only after the Activity is fully attached.
+            romPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                if (uri != null) handleRomSelected(uri)
+            }
+            biosPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                if (uri != null) handleBiosSelected(uri)
+            }
+
             setContentView(R.layout.activity_main)
-            gameSurfaceView = findViewById(R.id.game_surface_view)
+            root = findViewById(R.id.main_root)
             btnSettings = findViewById(R.id.btn_discrete_settings)
-            temporaryStateStore = TemporaryStateStore(this)
-            temporaryStateStore.clear()
+
+            // Construct non-native services only after the basic UI is visible.
+            gamepadManager = GamepadManager()
             coreManager = CoreManager(this)
+            netplaySession = NetplaySession()
+            temporaryStateStore = TemporaryStateStore(this).also { it.clear() }
+            activityScope = CoroutineScope(Dispatchers.Default + Job())
+
             val roomParam = intent?.data?.getQueryParameter("room")
-            if (!roomParam.isNullOrEmpty()) netplaySession.joinRoom(roomParam)
-            matchCoordinator = MatchCoordinator(netplaySession.currentRoom?.isHost ?: true, netplaySession.getTransport())
+            if (!roomParam.isNullOrEmpty()) netplaySession?.joinRoom(roomParam)
+            matchCoordinator = MatchCoordinator(
+                netplaySession?.currentRoom?.isHost ?: true,
+                netplaySession?.getTransport()
+            )
             btnSettings.setOnClickListener { openIsolatedSettings() }
-            // Native PS1 core is loaded only after a ROM is selected.
         } catch (t: Throwable) {
             android.util.Log.e("MainActivity", "Startup failure", t)
-            Toast.makeText(this, "تعذر تشغيل الواجهة: ${t.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            // Keep the Activity alive and expose a visible diagnostic instead of crashing.
+            Toast.makeText(this, "تعذر تهيئة بعض المكونات: ${t.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun startGameSurface() {
+        if (gameSurfaceView != null) return
+        runCatching {
+            val surface = GameSurfaceView(this)
+            surface.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            root.addView(surface, 0)
+            gameSurfaceView = surface
+        }.onFailure { android.util.Log.e("MainActivity", "Surface creation failed", it) }
     }
 
     private fun startGameLoop() {
         if (isGameRunning) return
         isGameRunning = true
-        activityScope.launch {
+        val scope = activityScope ?: return
+        scope.launch {
             val frameTimeNs = 16_666_666L
             while (isGameRunning) {
                 val startNs = System.nanoTime()
-                matchCoordinator?.tickFrame(gamepadManager.getCurrentInputMask())
+                val input = gamepadManager?.getCurrentInputMask() ?: 0
+                matchCoordinator?.tickFrame(input)
                 val sleepNs = frameTimeNs - (System.nanoTime() - startNs)
                 if (sleepNs > 0) delay(sleepNs / 1_000_000L)
             }
@@ -74,52 +123,76 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openIsolatedSettings() {
-        val dialog = IsolatedSettingsBottomSheet.newInstance()
-        dialog.currentRomTitle = currentRomName
-        dialog.currentBiosTitle = currentBiosName
-        dialog.onLoadRomClicked = { romPickerLauncher.launch("*/*") }
-        dialog.onLoadBiosClicked = { biosPickerLauncher.launch("*/*") }
-        dialog.onLeaveRoomClicked = { netplaySession.leaveRoom(); finish() }
-        dialog.onResetMappingClicked = { gamepadManager.resetMappingsToDefault() }
-        dialog.show(supportFragmentManager, IsolatedSettingsBottomSheet.TAG)
+        runCatching {
+            val dialog = IsolatedSettingsBottomSheet.newInstance()
+            dialog.currentRomTitle = currentRomName
+            dialog.currentBiosTitle = currentBiosName
+            dialog.onLoadRomClicked = { romPickerLauncher?.launch("*/*") }
+            dialog.onLoadBiosClicked = { biosPickerLauncher?.launch("*/*") }
+            dialog.onLeaveRoomClicked = { netplaySession?.leaveRoom(); finish() }
+            dialog.onResetMappingClicked = { gamepadManager?.resetMappingsToDefault() }
+            dialog.show(supportFragmentManager, IsolatedSettingsBottomSheet.TAG)
+        }.onFailure { android.util.Log.e("MainActivity", "Settings failed", it) }
     }
 
     private fun handleRomSelected(uri: Uri) {
-        val fileName = getFileNameFromUri(uri) ?: "game_${System.currentTimeMillis()}.bin"
-        contentResolver.openInputStream(uri)?.use { stream ->
-            val success = coreManager.importAndLoadRom(stream, fileName)
-            if (success) {
-                currentRomName = fileName
-                temporaryStateStore.clear()
-                startGameLoop()
-                Toast.makeText(this, "تم تحميل اللعبة بنجاح: $fileName", Toast.LENGTH_SHORT).show()
-            } else Toast.makeText(this, "تعذر تشغيل ملف اللعبة المحدد", Toast.LENGTH_LONG).show()
-        } ?: Toast.makeText(this, "تعذر قراءة ملف اللعبة", Toast.LENGTH_LONG).show()
+        val manager = coreManager ?: return
+        runCatching {
+            val fileName = getFileNameFromUri(uri) ?: "game_${System.currentTimeMillis()}.bin"
+            val input = contentResolver.openInputStream(uri)
+            if (input == null) {
+                Toast.makeText(this, "تعذر قراءة ملف اللعبة", Toast.LENGTH_LONG).show()
+                return
+            }
+            input.use { stream ->
+                val success = manager.importAndLoadRom(stream, fileName)
+                if (success) {
+                    currentRomName = fileName
+                    temporaryStateStore?.clear()
+                    startGameSurface()
+                    startGameLoop()
+                    Toast.makeText(this, "تم تحميل اللعبة بنجاح: $fileName", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "تعذر تشغيل ملف اللعبة المحدد", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.onFailure {
+            android.util.Log.e("MainActivity", "ROM loading failed", it)
+            Toast.makeText(this, "حدث خطأ أثناء تحميل اللعبة", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun handleBiosSelected(uri: Uri) {
-        val fileName = getFileNameFromUri(uri) ?: "scph1001.bin"
-        contentResolver.openInputStream(uri)?.use { stream ->
-            val success = coreManager.saveCustomBios(stream, fileName)
-            if (success) {
-                currentBiosName = fileName
-                Toast.makeText(this, "تم حفظ البيوس المخصص: $fileName", Toast.LENGTH_SHORT).show()
-            } else Toast.makeText(this, "تعذر حفظ ملف الـ BIOS", Toast.LENGTH_LONG).show()
-        }
+        val manager = coreManager ?: return
+        runCatching {
+            val fileName = getFileNameFromUri(uri) ?: "scph1001.bin"
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val success = manager.saveCustomBios(stream, fileName)
+                if (success) {
+                    currentBiosName = fileName
+                    Toast.makeText(this, "تم حفظ البيوس المخصص: $fileName", Toast.LENGTH_SHORT).show()
+                } else Toast.makeText(this, "تعذر حفظ ملف الـ BIOS", Toast.LENGTH_LONG).show()
+            } ?: Toast.makeText(this, "تعذر قراءة ملف الـ BIOS", Toast.LENGTH_LONG).show()
+        }.onFailure { android.util.Log.e("MainActivity", "BIOS loading failed", it) }
     }
 
     private fun getFileNameFromUri(uri: Uri): String? {
         var name: String? = null
         contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index != -1 && cursor.moveToFirst()) name = cursor.getString(index)
+            if (index >= 0 && cursor.moveToFirst()) name = cursor.getString(index)
         }
         return name
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean = if (event != null && gamepadManager.onKeyDown(keyCode, event)) true else super.onKeyDown(keyCode, event)
-    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean = if (event != null && gamepadManager.onKeyUp(keyCode, event)) true else super.onKeyUp(keyCode, event)
-    override fun onGenericMotionEvent(event: MotionEvent?): Boolean = if (event != null && gamepadManager.onGenericMotionEvent(event)) true else super.onGenericMotionEvent(event)
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean =
+        if (event != null && gamepadManager?.onKeyDown(keyCode, event) == true) true else super.onKeyDown(keyCode, event)
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean =
+        if (event != null && gamepadManager?.onKeyUp(keyCode, event) == true) true else super.onKeyUp(keyCode, event)
+
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean =
+        if (event != null && gamepadManager?.onGenericMotionEvent(event) == true) true else super.onGenericMotionEvent(event)
 
     private fun hideSystemUI() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -129,15 +202,20 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
     }
 
     override fun onDestroy() {
         isGameRunning = false
-        activityScope.cancel()
-        if (::coreManager.isInitialized) coreManager.unload()
-        if (::temporaryStateStore.isInitialized) temporaryStateStore.clear()
+        activityScope?.cancel()
+        runCatching { netplaySession?.leaveRoom() }
+        runCatching { coreManager?.unload() }
+        runCatching { gameSurfaceView?.let { root.removeView(it) } }
+        gameSurfaceView = null
         super.onDestroy()
     }
 }
