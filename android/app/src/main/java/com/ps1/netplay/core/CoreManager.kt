@@ -17,7 +17,6 @@ class CoreManager(private val context: Context) {
             lastUserError = "محرك PS1 الأصلي لم يتم تحميله"
             return false
         }
-
         val systemDir = File(context.filesDir, "system")
         val saveDir = File(context.filesDir, "saves")
         if (!systemDir.exists() && !systemDir.mkdirs()) {
@@ -32,14 +31,12 @@ class CoreManager(private val context: Context) {
             lastUserError = NativeCoreBridge.lastError().ifBlank { "تعذر إعداد مجلدات محرك PS1" }
             return false
         }
-
         val packagedCore = File(context.applicationInfo.nativeLibraryDir, coreFileName)
         if (!packagedCore.isFile || packagedCore.length() == 0L) {
             lastUserError = "محرك PS1 غير موجود داخل APK"
-            Log.e(tag, lastUserError + ": ${packagedCore.absolutePath}")
+            Log.e(tag, "$lastUserError: ${packagedCore.absolutePath}")
             return false
         }
-
         isCoreLoaded = NativeCoreBridge.safeLoadCore(packagedCore.absolutePath)
         if (!isCoreLoaded) lastUserError = NativeCoreBridge.lastError().ifBlank { "تعذر تهيئة محرك PS1" }
         return isCoreLoaded
@@ -48,28 +45,68 @@ class CoreManager(private val context: Context) {
     fun loadGame(romPath: String): Boolean {
         lastUserError = ""
         if (!isCoreLoaded && !loadCore()) return false
-
         val file = File(romPath)
         if (!file.isFile || file.length() < 2352L) {
             lastUserError = "ملف صورة القرص غير صالح أو ناقص"
             return false
         }
 
-        // Mortal Kombat Trilogy [U] is a USA release. PCSX ReARMed accepts
-        // SCPH1001.BIN, which is the BIOS the user already supplied.
-        // Keep the IMG as the entry point: PCSX ReARMed supports .img directly.
-        val extension = file.extension.lowercase()
-        val actualPath = when (extension) {
-            "img", "bin", "iso", "cue", "ccd", "chd", "pbp" -> file.absolutePath
+        // PCSX ReARMed officially supports IMG/CCD, but its Libretro frontend
+        // expects a cue sheet describing CD track layout. When the user selects
+        // the IMG from a CloneCD set, generate a matching single-track CUE next
+        // to the imported image and load the CUE entry point.
+        val actualPath = when (file.extension.lowercase()) {
+            "img" -> {
+                val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
+                if (!cue.isFile || cue.length() == 0L) {
+                    if (!createCueForRawPs1Image(file, cue)) {
+                        lastUserError = "تعذر إنشاء ملف CUE لصورة القرص"
+                        return false
+                    }
+                }
+                cue.absolutePath
+            }
+            "bin" -> {
+                val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
+                if (!cue.isFile || cue.length() == 0L) {
+                    if (!createCueForRawPs1Image(file, cue)) {
+                        lastUserError = "تعذر إنشاء ملف CUE لصورة القرص"
+                        return false
+                    }
+                }
+                cue.absolutePath
+            }
+            "cue", "ccd", "iso", "chd", "pbp", "m3u" -> file.absolutePath
             else -> {
-                lastUserError = "صيغة PS1 غير مدعومة: .$extension"
+                lastUserError = "صيغة PS1 غير مدعومة: .${file.extension}"
                 return false
             }
         }
 
         isGameLoaded = NativeCoreBridge.safeLoadGame(actualPath)
-        if (!isGameLoaded) lastUserError = NativeCoreBridge.lastError().ifBlank { "محرك PS1 رفض صورة اللعبة" }
+        if (!isGameLoaded) {
+            lastUserError = NativeCoreBridge.lastError().ifBlank { "محرك PS1 رفض صورة اللعبة" }
+        }
         return isGameLoaded
+    }
+
+    private fun createCueForRawPs1Image(imageFile: File, cueFile: File): Boolean {
+        return try {
+            // 2352-byte raw sectors are the normal CloneCD/PS1 IMG layout.
+            // MODE2/2352 is the appropriate descriptor for a raw PS1 data track.
+            if (imageFile.length() % 2352L != 0L) return false
+            val escaped = imageFile.name.replace("\"", "\\\"")
+            cueFile.writeText(
+                "FILE \"$escaped\" BINARY\n" +
+                    "  TRACK 01 MODE2/2352\n" +
+                    "    INDEX 01 00:00:00\n",
+                Charsets.US_ASCII
+            )
+            cueFile.isFile && cueFile.length() > 0L
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to create CUE", e)
+            false
+        }
     }
 
     fun saveCustomBios(sourceInputStream: java.io.InputStream, targetFileName: String): Boolean {
@@ -82,6 +119,7 @@ class CoreManager(private val context: Context) {
             true
         } catch (e: Exception) {
             Log.e(tag, "Failed to save BIOS", e)
+            lastUserError = "تعذر حفظ BIOS: ${e.javaClass.simpleName}"
             false
         }
     }
@@ -89,7 +127,10 @@ class CoreManager(private val context: Context) {
     fun importAndLoadRom(sourceInputStream: java.io.InputStream, originalFileName: String): Boolean {
         return try {
             val romsDir = File(context.filesDir, "roms")
-            if (!romsDir.exists() && !romsDir.mkdirs()) return false
+            if (!romsDir.exists() && !romsDir.mkdirs()) {
+                lastUserError = "تعذر إنشاء مجلد الألعاب"
+                return false
+            }
             val safeName = File(originalFileName).name
             val romFile = File(romsDir, safeName)
             FileOutputStream(romFile).use { output -> sourceInputStream.copyTo(output, DEFAULT_BUFFER_SIZE) }
