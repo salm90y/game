@@ -1,17 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- 1. Pure Fullscreen / Clean Screen Video Surface View -->
-    <com.ps1.netplay.ui.GameSurfaceView
-        android:id="@+id/game_surface_view"
+    <!-- Intentionally a plain Android view at startup. The native PS1 surface is
+         created only after a ROM is successfully selected. -->
+    <View
+        android:id="@+id/startup_background"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="center" />
+        android:background="#000000"
+        android:importantForAccessibility="no" />
 
-    <!-- 2. Discrete, Semi-Transparent Settings Trigger Button (Top-Right Corner) -->
     <ImageButton
         android:id="@+id/btn_discrete_settings"
         android:layout_width="40dp"
