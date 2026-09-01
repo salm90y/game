@@ -12,8 +12,6 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// Libretro environment command values used here. Keeping them local makes the
-// bridge tolerant of older/minimal libretro headers.
 static constexpr unsigned RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9;
 static constexpr unsigned RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY = 31;
 
@@ -91,10 +89,10 @@ static bool retro_environment_cb(unsigned cmd, void *data) {
             if (g_save_directory.empty()) return false;
             *static_cast<const char **>(data) = g_save_directory.c_str();
             return true;
-        case 10: // RETRO_ENVIRONMENT_SET_PIXEL_FORMAT
+        case 10:
             g_pixel_format = *static_cast<enum retro_pixel_format *>(data);
             return g_pixel_format == RETRO_PIXEL_FORMAT_RGB565 || g_pixel_format == RETRO_PIXEL_FORMAT_XRGB8888;
-        case 3: // RETRO_ENVIRONMENT_GET_CAN_DUPE
+        case 3:
             *static_cast<bool *>(data) = true;
             return true;
         default:
@@ -122,8 +120,6 @@ JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoad
         return JNI_FALSE;
     }
 
-    // Core lives in <filesDir>/cores/core.so, so expose <filesDir>/system and
-    // <filesDir>/saves to Libretro. This is required for SCPH1001.BIN discovery.
     const size_t slash = corePath.find_last_of('/');
     const std::string coreDir = slash == std::string::npos ? std::string() : corePath.substr(0, slash);
     const size_t parentSlash = coreDir.find_last_of('/');
@@ -171,12 +167,13 @@ JNIEXPORT jboolean JNICALL Java_com_ps1_netplay_core_NativeCoreBridge_nativeLoad
     if (!g_core_initialized || !g_retro_load_game || !game_path) return JNI_FALSE;
     const char *path = env->GetStringUTFChars(game_path, nullptr);
     if (!path) return JNI_FALSE;
+    const std::string gamePath(path);
     retro_game_info info = {};
-    info.path = path;
+    info.path = gamePath.c_str();
     const bool ok = g_retro_load_game(&info);
     env->ReleaseStringUTFChars(game_path, path);
     g_game_loaded = ok;
-    if (!ok) LOGE("Libretro rejected game path: %s", path);
+    if (!ok) LOGE("Libretro rejected game path: %s", gamePath.c_str());
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
