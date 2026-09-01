@@ -11,17 +11,25 @@ class CoreManager(private val context: Context) {
     private var isGameLoaded = false
 
     fun loadCore(coreFileName: String = "libmednafen_psx_hw_libretro_android.so"): Boolean {
-        if (!NativeCoreBridge.isAvailable()) {
+        if (!NativeCoreBridge.ensureLoaded()) {
             Log.e(tag, "JNI bridge is unavailable")
             return false
         }
+        val systemDir = File(context.filesDir, "system")
+        val saveDir = File(context.filesDir, "saves")
+        if ((!systemDir.exists() && !systemDir.mkdirs()) || (!saveDir.exists() && !saveDir.mkdirs())) {
+            Log.e(tag, "Unable to create Libretro writable directories")
+            return false
+        }
+        NativeCoreBridge.safeSetDirectories(systemDir.absolutePath, saveDir.absolutePath)
+
         val packagedCore = File(context.applicationInfo.nativeLibraryDir, coreFileName)
         if (!packagedCore.isFile || packagedCore.length() == 0L) {
             Log.e(tag, "PS1 Libretro core is missing from APK: ${packagedCore.absolutePath}")
             return false
         }
         isCoreLoaded = NativeCoreBridge.safeLoadCore(packagedCore.absolutePath)
-        Log.i(tag, "Libretro PS1 core load status: $isCoreLoaded path=${packagedCore.absolutePath}")
+        Log.i(tag, "Libretro core load=$isCoreLoaded path=${packagedCore.absolutePath}")
         return isCoreLoaded
     }
 
@@ -29,28 +37,26 @@ class CoreManager(private val context: Context) {
         if (!isCoreLoaded && !loadCore()) return false
         val actualPath = resolvePs1EntryPoint(romPath) ?: return false
         isGameLoaded = NativeCoreBridge.safeLoadGame(actualPath)
-        Log.i(tag, "Game load status for $actualPath: $isGameLoaded")
+        Log.i(tag, "Game load=$isGameLoaded path=$actualPath")
         return isGameLoaded
     }
 
     private fun resolvePs1EntryPoint(path: String): String? {
         val file = File(path)
-        if (!file.isFile || file.length() == 0L) return null
+        if (!file.isFile || file.length() < 2352L) return null
         return when (file.extension.lowercase()) {
             "cue" -> file.absolutePath
-            "img", "bin" -> {
-                val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
-                if (!cue.exists() || cue.length() == 0L) createSingleTrackCue(file, cue)
-                if (cue.isFile && cue.length() > 0L) cue.absolutePath else null
-            }
             "ccd" -> {
                 val img = File(file.parentFile, file.nameWithoutExtension + ".img")
-                if (!img.isFile || img.length() == 0L) null
-                else {
-                    val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
-                    if (!cue.exists() || cue.length() == 0L) createSingleTrackCue(img, cue)
-                    if (cue.isFile && cue.length() > 0L) cue.absolutePath else null
-                }
+                if (img.isFile && img.length() >= 2352L) file.absolutePath else null
+            }
+            "img", "bin" -> {
+                // The Android picker imports one selected file. For a CloneCD IMG,
+                // create a valid single-track CUE beside it. This is sufficient for
+                // PS1 data-track images such as Mortal Kombat Trilogy.
+                val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
+                if (!cue.isFile || cue.length() == 0L) createSingleTrackCue(file, cue)
+                if (cue.isFile && cue.length() > 0L) cue.absolutePath else null
             }
             else -> null
         }
@@ -61,7 +67,7 @@ class CoreManager(private val context: Context) {
             "FILE \"${imageFile.name.replace("\"", "\\\"")}\" BINARY\n" +
                 "  TRACK 01 MODE2/2352\n" +
                 "    INDEX 01 00:00:00\n",
-            Charsets.UTF_8
+            Charsets.US_ASCII
         )
         true
     } catch (e: Exception) {
@@ -69,30 +75,28 @@ class CoreManager(private val context: Context) {
         false
     }
 
-    fun saveCustomBios(sourceInputStream: java.io.InputStream, targetFileName: String): Boolean {
-        return try {
-            val systemDir = File(context.filesDir, "system")
-            if (!systemDir.exists() && !systemDir.mkdirs()) return false
-            val biosFile = File(systemDir, File(targetFileName).name)
-            FileOutputStream(biosFile).use { output -> sourceInputStream.copyTo(output) }
-            true
-        } catch (e: Exception) {
-            Log.e(tag, "Failed to save BIOS", e)
-            false
-        }
+    fun saveCustomBios(sourceInputStream: java.io.InputStream, targetFileName: String): Boolean = try {
+        val systemDir = File(context.filesDir, "system")
+        if (!systemDir.exists() && !systemDir.mkdirs()) return false
+        val biosFile = File(systemDir, File(targetFileName).name)
+        FileOutputStream(biosFile).use { output -> sourceInputStream.copyTo(output) }
+        Log.i(tag, "BIOS saved: ${biosFile.absolutePath}")
+        true
+    } catch (e: Exception) {
+        Log.e(tag, "Failed to save BIOS", e)
+        false
     }
 
-    fun importAndLoadRom(sourceInputStream: java.io.InputStream, originalFileName: String): Boolean {
-        return try {
-            val romsDir = File(context.filesDir, "roms")
-            if (!romsDir.exists() && !romsDir.mkdirs()) return false
-            val romFile = File(romsDir, File(originalFileName).name)
-            FileOutputStream(romFile).use { output -> sourceInputStream.copyTo(output, DEFAULT_BUFFER_SIZE) }
-            loadGame(romFile.absolutePath)
-        } catch (e: Exception) {
-            Log.e(tag, "Failed to import ROM", e)
-            false
-        }
+    fun importAndLoadRom(sourceInputStream: java.io.InputStream, originalFileName: String): Boolean = try {
+        val romsDir = File(context.filesDir, "roms")
+        if (!romsDir.exists() && !romsDir.mkdirs()) return false
+        val safeName = File(originalFileName).name
+        val romFile = File(romsDir, safeName)
+        FileOutputStream(romFile).use { output -> sourceInputStream.copyTo(output, DEFAULT_BUFFER_SIZE) }
+        loadGame(romFile.absolutePath)
+    } catch (e: Exception) {
+        Log.e(tag, "Failed to import ROM", e)
+        false
     }
 
     fun unload() {
