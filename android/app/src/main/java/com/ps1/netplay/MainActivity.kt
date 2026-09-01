@@ -1,17 +1,23 @@
 package com.ps1.netplay
 
+import android.app.AlertDialog
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
@@ -39,6 +45,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSettings: ImageButton
     private lateinit var btnChat: Button
     private lateinit var btnConnect: Button
+    private lateinit var roomCodeView: TextView
+    private lateinit var syncStatusView: TextView
     private var gameSurfaceView: GameSurfaceView? = null
     private var gamepadManager: GamepadManager? = null
     private var coreManager: CoreManager? = null
@@ -65,20 +73,43 @@ class MainActivity : AppCompatActivity() {
             btnSettings = findViewById(R.id.btn_discrete_settings)
             btnChat = findViewById(R.id.btn_chat)
             btnConnect = findViewById(R.id.btn_connect)
+            roomCodeView = findViewById(R.id.txt_room_code)
+            syncStatusView = findViewById(R.id.txt_sync_status)
+
             gamepadManager = GamepadManager()
             coreManager = CoreManager(this)
             netplaySession = NetplaySession()
             temporaryStateStore = TemporaryStateStore(this).also { it.clear() }
             activityScope = CoroutineScope(Dispatchers.Default + Job())
+
             val roomParam = intent?.data?.getQueryParameter("room")
-            if (!roomParam.isNullOrEmpty()) netplaySession?.joinRoom(roomParam)
+            if (!roomParam.isNullOrEmpty()) {
+                netplaySession?.joinRoom(roomParam)
+            } else {
+                netplaySession?.createRoom()
+            }
+            updateRoomUi()
             matchCoordinator = MatchCoordinator(netplaySession?.currentRoom?.isHost ?: true, netplaySession?.getTransport())
+
             btnSettings.setOnClickListener { openIsolatedSettings() }
-            btnChat.setOnClickListener { Toast.makeText(this, "الدردشة داخل غرفة المزامنة", Toast.LENGTH_SHORT).show() }
-            btnConnect.setOnClickListener { Toast.makeText(this, if (netplaySession?.currentRoom == null) "أنشئ أو أدخل غرفة أولاً من الإعدادات" else "الغرفة جاهزة للاتصال", Toast.LENGTH_SHORT).show() }
+            btnChat.setOnClickListener { showRoomChat() }
+            btnConnect.setOnClickListener { showRoomInfo() }
         } catch (t: Throwable) {
             android.util.Log.e("MainActivity", "Startup failure", t)
             Toast.makeText(this, "تعذر تهيئة الواجهة: ${t.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun updateRoomUi() {
+        val room = netplaySession?.currentRoom
+        if (room == null) {
+            roomCodeView.text = "ROOM ----"
+            syncStatusView.text = "●  لم يتم إنشاء غرفة"
+            syncStatusView.setTextColor(Color.rgb(251, 191, 36))
+        } else {
+            roomCodeView.text = "ROOM ${room.roomCode}"
+            syncStatusView.text = if (room.isHost) "●  الغرفة جاهزة • بانتظار اللاعب الآخر" else "●  تم الانضمام • بانتظار المزامنة"
+            syncStatusView.setTextColor(Color.rgb(105, 211, 167))
         }
     }
 
@@ -125,6 +156,84 @@ class MainActivity : AppCompatActivity() {
             dialog.onResetMappingClicked = { gamepadManager?.resetMappingsToDefault() }
             dialog.show(supportFragmentManager, IsolatedSettingsBottomSheet.TAG)
         }.onFailure { android.util.Log.e("MainActivity", "Settings failed", it) }
+    }
+
+    private fun showRoomInfo() {
+        val room = netplaySession?.currentRoom
+        if (room == null) {
+            netplaySession?.createRoom()
+            updateRoomUi()
+        }
+        val code = netplaySession?.currentRoom?.roomCode ?: "------"
+        AlertDialog.Builder(this)
+            .setTitle("غرفة المزامنة")
+            .setMessage("رمز الغرفة:\n$code\n\nشارك هذا الرمز مع اللاعب الآخر للانضمام.\n\nحالة النقل: في انتظار قناة الاتصال.")
+            .setPositiveButton("حسنًا", null)
+            .show()
+    }
+
+    private fun showRoomChat() {
+        if (netplaySession?.currentRoom == null) {
+            netplaySession?.createRoom()
+            updateRoomUi()
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 20, 28, 8)
+            setBackgroundColor(Color.rgb(10, 22, 38))
+        }
+        val title = TextView(this).apply {
+            text = "دردشة غرفة المزامنة  •  ${netplaySession?.currentRoom?.roomCode ?: "------"}"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.RIGHT
+            setPadding(0, 0, 0, 14)
+        }
+        val messages = TextView(this).apply {
+            text = "الغرفة جاهزة.\nأرسل رسالة للاعب الآخر بعد اتصال قناة الغرفة."
+            textSize = 14f
+            setTextColor(Color.rgb(180, 198, 218))
+            gravity = Gravity.RIGHT
+            setPadding(0, 12, 0, 12)
+        }
+        val scroll = ScrollView(this).apply {
+            addView(messages)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val input = EditText(this).apply {
+            hint = "اكتب رسالة..."
+            setHintTextColor(Color.rgb(120, 145, 173))
+            setTextColor(Color.WHITE)
+            setSingleLine(true)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val send = Button(this).apply {
+            text = "إرسال"
+            isAllCaps = false
+            setOnClickListener {
+                val value = input.text?.toString()?.trim().orEmpty()
+                if (value.isNotEmpty()) {
+                    messages.append("\n\nأنت: $value")
+                    input.text?.clear()
+                    scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+                }
+            }
+        }
+        inputRow.addView(input)
+        inputRow.addView(send)
+        container.addView(title)
+        container.addView(scroll)
+        container.addView(inputRow)
+
+        AlertDialog.Builder(this)
+            .setView(container)
+            .setNegativeButton("إغلاق", null)
+            .show()
     }
 
     private fun handleRomSelected(uri: Uri) {
