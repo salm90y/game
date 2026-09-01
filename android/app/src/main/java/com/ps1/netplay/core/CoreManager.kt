@@ -51,9 +51,6 @@ class CoreManager(private val context: Context) {
                 if (img.isFile && img.length() >= 2352L) file.absolutePath else null
             }
             "img", "bin" -> {
-                // The Android picker imports one selected file. For a CloneCD IMG,
-                // create a valid single-track CUE beside it. This is sufficient for
-                // PS1 data-track images such as Mortal Kombat Trilogy.
                 val cue = File(file.parentFile, file.nameWithoutExtension + ".cue")
                 if (!cue.isFile || cue.length() == 0L) createSingleTrackCue(file, cue)
                 if (cue.isFile && cue.length() > 0L) cue.absolutePath else null
@@ -75,28 +72,32 @@ class CoreManager(private val context: Context) {
         false
     }
 
-    fun saveCustomBios(sourceInputStream: java.io.InputStream, targetFileName: String): Boolean = try {
-        val systemDir = File(context.filesDir, "system")
-        if (!systemDir.exists() && !systemDir.mkdirs()) return false
-        val biosFile = File(systemDir, File(targetFileName).name)
-        FileOutputStream(biosFile).use { output -> sourceInputStream.copyTo(output) }
-        Log.i(tag, "BIOS saved: ${biosFile.absolutePath}")
-        true
-    } catch (e: Exception) {
-        Log.e(tag, "Failed to save BIOS", e)
-        false
+    fun saveCustomBios(sourceInputStream: java.io.InputStream, targetFileName: String): Boolean {
+        return try {
+            val systemDir = File(context.filesDir, "system")
+            if (!systemDir.exists() && !systemDir.mkdirs()) return false
+            val biosFile = File(systemDir, File(targetFileName).name)
+            FileOutputStream(biosFile).use { output -> sourceInputStream.copyTo(output) }
+            Log.i(tag, "BIOS saved: ${biosFile.absolutePath}")
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save BIOS", e)
+            false
+        }
     }
 
-    fun importAndLoadRom(sourceInputStream: java.io.InputStream, originalFileName: String): Boolean = try {
-        val romsDir = File(context.filesDir, "roms")
-        if (!romsDir.exists() && !romsDir.mkdirs()) return false
-        val safeName = File(originalFileName).name
-        val romFile = File(romsDir, safeName)
-        FileOutputStream(romFile).use { output -> sourceInputStream.copyTo(output, DEFAULT_BUFFER_SIZE) }
-        loadGame(romFile.absolutePath)
-    } catch (e: Exception) {
-        Log.e(tag, "Failed to import ROM", e)
-        false
+    fun importAndLoadRom(sourceInputStream: java.io.InputStream, originalFileName: String): Boolean {
+        return try {
+            val romsDir = File(context.filesDir, "roms")
+            if (!romsDir.exists() && !romsDir.mkdirs()) return false
+            val safeName = File(originalFileName).name
+            val romFile = File(romsDir, safeName)
+            FileOutputStream(romFile).use { output -> sourceInputStream.copyTo(output, DEFAULT_BUFFER_SIZE) }
+            loadGame(romFile.absolutePath)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to import ROM", e)
+            false
+        }
     }
 
     fun unload() {
